@@ -58,6 +58,15 @@
   function openAdd(url = "", headers?: Record<string, string>) {
     store.modal = { type: "add", url, headers };
   }
+  // tarayıcıdan gelen indirme açık bir pencerenin üstüne yazıp kaybolmasın, duraklatılmış olarak listeye girsin
+  function external(n: any) {
+    if (store.modal) {
+      call("add", { p: { kind: "http", url: n.url, name: n.filename || "", headers: n.headers, start: false } });
+      toasts.push({ kind: "ok", title: tr("Listeye duraklatılmış olarak eklendi"), body: n.filename || host(n.url) });
+      return;
+    }
+    store.modal = { type: "add", url: n.url, headers: n.headers, filename: n.filename, external: true };
+  }
   function submitOmni(e: Event) {
     e.preventDefault();
     if (omni.trim()) { openAdd(omni.trim()); omni = ""; }
@@ -154,7 +163,12 @@
         toasts.push({ kind: "clip", title: tr("Panoda bağlantı var"), body: n.url, ttl: 8000, actions: [{ label: tr("İndir"), primary: true, run: () => openAdd(n.url) }] });
         break;
       case "external":
-        openAdd(n.url, n.headers);
+        external(n);
+        break;
+      case "added":
+        store.filter = "all";
+        store.select(n.id);
+        tick().then(() => scrollToId(n.id));
         break;
       case "grab":
         store.modal = { type: "grab", data: n.data };
@@ -416,7 +430,7 @@
   {@const md = store.modal}
   <Modal onclose={() => (store.modal = null)}>
     {#if md.type === "add"}
-      <AddDialog url={md.url} headers={md.headers} onclose={() => (store.modal = null)} />
+      <AddDialog url={md.url} headers={md.headers} filename={md.filename} external={md.external} onclose={() => (store.modal = null)} />
     {:else if md.type === "grab"}
       <Grabber data={{ url: md.data.url, title: md.data.title, icon: md.data.icon || "", pages: 1, items: md.data.items || [] }} onclose={() => (store.modal = null)} standalone />
     {:else if md.type === "settings"}

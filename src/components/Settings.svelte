@@ -238,8 +238,8 @@
             <div class="seg">{#each [320, 256, 192, 128] as b}<button class="num" class:on={s.default_bitrate === b} onclick={() => set({ default_bitrate: b })}>{b} kbps</button>{/each}</div></div>
         </div>
         <div class="group">
-          <div class="line"><div><b>{tr("Tarayıcının çerezleri")}</b><small>{tr("Yaş sınırlı ve üyelik isteyen videolar için oturumunu kullanır. Chrome ve Edge açıkken çerezlerini kilitler, en sorunsuzu Firefox")}</small></div>
-            <div class="seg">{#each [["", "Kapalı"], ["firefox", "Firefox"], ["chrome", "Chrome"], ["edge", "Edge"], ["brave", "Brave"]] as [v, l]}<button class:on={(s.cookies_from || "") === v} onclick={() => set({ cookies_from: v })}>{tr(l)}</button>{/each}</div></div>
+          <div class="line"><div><b>{tr("Tarayıcının çerezleri")}</b><small>{tr("Yapıştırılan bağlantılarda yaş sınırlı ve üyelik isteyen videolar için. Chrome ve Edge çerezlerini şifrelediği için desteklenmiyor; eklentiden gelen videolarda oturum zaten kullanılıyor")}</small></div>
+            <div class="seg">{#each [["", "Kapalı"], ["firefox", "Firefox"], ["brave", "Brave"], ["opera", "Opera"]] as [v, l]}<button class:on={(s.cookies_from || "") === v} onclick={() => set({ cookies_from: v })}>{tr(l)}</button>{/each}</div></div>
         </div>
       {:else if cur === "gorunum"}
         <div class="group">
@@ -261,6 +261,7 @@
       {:else if cur === "tarayici"}
         <div class="group">
           {@render sw("İndirmeleri devral", "Chrome'da başlayan indirmeler Trawl'a gelir", "intercept")}
+          {@render sw("Pencereyi öne getir", "Tarayıcıdan bir indirme gelince Trawl öne çıkar ve indirmeyi gösterir", "focus_on_add")}
           <div class="line col">
             <div class="lh"><b>{tr("Devralma alt sınırı")}</b><span class="num val">{bytes(s.min_intercept_kb * 1024)}</span></div>
             <input type="range" min="0" max="10240" step="128" value={s.min_intercept_kb} onchange={(e) => set({ min_intercept_kb: +e.currentTarget.value })} aria-label={tr("Devralma alt sınırı")} />

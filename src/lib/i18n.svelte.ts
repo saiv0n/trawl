@@ -500,6 +500,21 @@ const EN: Record<string, string> = {
   "Manifest çok büyük": "The manifest is too large",
   "HLS ya da DASH manifesti değil": "Not an HLS or DASH manifest",
   "ffmpeg paketi beklenen dosyaları içermiyor": "The ffmpeg package is missing the expected files",
+  "Listeye duraklatılmış olarak eklendi": "Added to the list as paused",
+  "Pencereyi öne getir": "Bring window to front",
+  "Tarayıcıdan bir indirme gelince Trawl öne çıkar ve indirmeyi gösterir": "When a download comes from the browser, Trawl comes forward and shows it",
+  "Site bot korumasına takıldı (Cloudflare gibi). Sayfayı tarayıcıda açıp eklentinin panelinden indirmeyi deneyin": "The site's bot protection blocked us (like Cloudflare). Open the page in your browser and try downloading from the extension panel",
+  "Bu içerik oturum açmayı istiyor. Sayfayı tarayıcıda açıp eklentiyle indirin ya da Ayarlar > Video ve ses'ten tarayıcı çerezlerini seçin": "This content needs you to be signed in. Download it from the page with the extension, or pick your browser's cookies in Settings > Video and audio",
+  "Bu video DRM ile korunuyor, indirilemez": "This video is DRM protected and can't be downloaded",
+  "Sunucu kullanıcı adı ve şifre istiyor. Ayarlar > Klasör ve giriş'ten bu site için giriş ekleyin": "The server wants a username and password. Add a login for this site in Settings > Folders and logins",
+  "Sunucu erişimi reddetti (403). Bağlantının süresi dolmuş olabilir; sayfadan yeni bağlantıyı alıp Bağlantıyı güncelle ile sürdürün": "The server refused access (403). The link may have expired; get a new link from the page and resume with Update link",
+  "Sunucu istenen bölümü veremedi. Baştan indir ile yeniden deneyin": "The server couldn't send the requested part. Try again with Restart",
+  "Sunucu çok fazla istek dedi. Biraz bekleyip yeniden deneyin ya da bağlantı sayısını azaltın": "The server says too many requests. Wait a bit and retry, or lower the connection count",
+  "Sunucu şu an hata veriyor. Biraz sonra yeniden deneyin": "The server is having errors right now. Try again a bit later",
+  "Dosya indikten hemen sonra kayboldu. Antivirüs karantinaya almış olabilir": "The file vanished right after downloading. Your antivirus may have quarantined it",
+  "Chrome ve Edge çerezlerini şifreliyor, okunamıyor. Ayarlar > Video ve ses'ten Firefox'u seçin ya da videoyu sayfadayken eklentiyle indirin": "Chrome and Edge encrypt their cookies, so they can't be read. Pick Firefox in Settings > Video and audio, or download the video from the page with the extension",
+  "Tarayıcının çerezleri okunamadı. Tarayıcı açıkken çerezlerini kilitliyor; kapatıp yeniden deneyin": "Couldn't read the browser's cookies. The browser locks them while it's open; close it and try again",
+  "Yapıştırılan bağlantılarda yaş sınırlı ve üyelik isteyen videolar için. Chrome ve Edge çerezlerini şifrelediği için desteklenmiyor; eklentiden gelen videolarda oturum zaten kullanılıyor": "For age-restricted and members-only videos from pasted links. Chrome and Edge encrypt their cookies, so they aren't supported; videos sent from the extension already use your session",
 };
 
 const en = () => store.settings?.lang === "en";

@@ -46,7 +46,42 @@ fn base_cmd() -> Result<Command> {
 // eklentinin yakaladığı ham m3u8/mpd'de bütün başlıkları geçir, korumalı akış ancak öyle iniyor.
 // yt-dlp'nin kendi çözücüsü olan sitelerde sadece Referer; youtube çerezle kısıtlı istemciye düşüp
 // "Requested format is not available" veriyor.
-fn add_headers(c: &mut Command, url: &str, h: &std::collections::BTreeMap<String, String>) {
+/// geçici çerez dosyası, iş bitince siliniyor
+pub struct CookieFile(Option<PathBuf>);
+
+impl Drop for CookieFile {
+    fn drop(&mut self) {
+        if let Some(p) = &self.0 {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+/// eklentinin yolladığı Cookie başlığını yt-dlp'nin okuduğu netscape biçimine çevirir
+pub(crate) fn cookie_file(url: &str, cookie: &str) -> Option<PathBuf> {
+    let host = host_of(url);
+    let domain = format!(".{}", host.trim_start_matches("www."));
+    let mut out = String::from("# Netscape HTTP Cookie File\n");
+    for kv in cookie.split(';') {
+        let Some((k, v)) = kv.trim().split_once('=') else { continue };
+        if k.is_empty() || k.contains(['\t', '\n']) || v.contains(['\t', '\n']) {
+            continue;
+        }
+        out += &format!("{domain}\tTRUE\t/\tTRUE\t0\t{k}\t{v}\n");
+    }
+    let dir = data_dir().join("tmp");
+    std::fs::create_dir_all(&dir).ok()?;
+    let p = dir.join(format!("c{}.txt", uuid::Uuid::new_v4().simple()));
+    std::fs::write(&p, out).ok()?;
+    Some(p)
+}
+
+fn is_youtube(url: &str) -> bool {
+    let h = host_of(url);
+    ["youtube.com", "youtu.be", "youtube-nocookie.com"].iter().any(|m| h == *m || h.ends_with(&format!(".{m}")))
+}
+
+fn add_headers(c: &mut Command, url: &str, h: &std::collections::BTreeMap<String, String>) -> CookieFile {
     let site = is_media_host(url);
     for (k, v) in h {
         if hop_header(k) || v.is_empty() || v.chars().any(char::is_control) || (site && !k.eq_ignore_ascii_case("Referer")) {
@@ -55,12 +90,25 @@ fn add_headers(c: &mut Command, url: &str, h: &std::collections::BTreeMap<String
         c.arg("--add-header").arg(format!("{k}:{v}"));
     }
     let from = COOKIES_FROM.read().clone();
+    let mut file = None;
     if !from.is_empty() {
         c.arg("--cookies-from-browser").arg(from);
+    } else if site && !is_youtube(url) {
+        // instagram, x, facebook gibi sitelerde gizli ya da yaş sınırlı içerik oturum ister.
+        // youtube hariç, orada çerez kısıtlı istemciye düşürüyor
+        if let Some(p) = hget(h, "Cookie").and_then(|ck| cookie_file(url, ck)) {
+            c.arg("--cookies").arg(&p);
+            file = Some(p);
+        }
+    }
+    if !site {
+        // cloudflare gibi korumalar tarayıcı olmayan tls imzasını geri çeviriyor
+        c.args(["--extractor-args", "generic:impersonate"]);
     }
     if let Some((u, p)) = login_for(url) {
         c.arg("--username").arg(u).arg("--password").arg(p);
     }
+    CookieFile(file)
 }
 
 /// yaş sınırlı ve üyelik isteyen videolar için tarayıcının çerezleri
@@ -113,7 +161,7 @@ fn n(v: &Value, k: &str) -> f64 {
 pub async fn analyze(url: &str, headers: &std::collections::BTreeMap<String, String>) -> Result<MediaInfo> {
     let mut c = base_cmd()?;
     c.args(["-J", "--flat-playlist", "--no-warnings", "--playlist-end", "2000"]);
-    add_headers(&mut c, url, headers);
+    let _ck = add_headers(&mut c, url, headers);
     c.arg("--").arg(url);
     let out = tokio::time::timeout(std::time::Duration::from_secs(90), c.output())
         .await
@@ -199,14 +247,22 @@ pub async fn analyze(url: &str, headers: &std::collections::BTreeMap<String, Str
 }
 
 pub async fn run(t: Arc<Task>, m: Arc<Manager>) -> Result<()> {
-    let (url, folder, o, headers) = {
+    let (url, folder, o, headers, title, id) = {
         let mut d = t.d.lock();
         d.status = Status::Downloading;
-        (d.url.clone(), d.folder.clone(), d.opts.clone(), d.headers.clone())
+        (d.url.clone(), d.folder.clone(), d.opts.clone(), d.headers.clone(), d.title.clone(), d.id.clone())
     };
     std::fs::create_dir_all(&folder)?;
     let mut c = base_cmd()?;
-    let tpl = PathBuf::from(&folder).join("%(title).170B.%(ext)s");
+    // ham m3u8/mpd'de yt-dlp'nin başlığı "master", "index" oluyor; ikinci akış ilkinin üstüne düşüp
+    // "zaten indirilmiş" diye eski dosyayı gösteriyordu
+    let raw = matches!(url_ext(&url).as_str(), "m3u8" | "mpd") || url.contains(".m3u8") || url.contains(".mpd");
+    let tpl = if raw {
+        let base = if title.trim().is_empty() { "video".to_string() } else { safe_name(&title).chars().take(150).collect() };
+        PathBuf::from(&folder).join(format!("{} [{}].%(ext)s", base.replace('%', "%%"), &id[..6.min(id.len())]))
+    } else {
+        PathBuf::from(&folder).join("%(title).170B.%(ext)s")
+    };
     c.args(["--newline", "--progress", "--no-playlist", "--windows-filenames", "--no-mtime", "--continue"])
         .args(["--concurrent-fragments", "8", "--retries", "15", "--fragment-retries", "15"])
         .args(["--progress-template", "download:VDL %(progress)j"])
@@ -215,7 +271,7 @@ pub async fn run(t: Arc<Task>, m: Arc<Manager>) -> Result<()> {
         .args(["--print", "before_dl:VTITLE %(title)s"])
         .arg("-o")
         .arg(&tpl);
-    add_headers(&mut c, &url, &headers);
+    let _ck = add_headers(&mut c, &url, &headers);
     // yt-dlp ortak sınırı bilmiyor, çalışan medya işleri arasında paylaştır
     let running = m.tasks.lock().iter().filter(|x| x.d.lock().kind == crate::model::Kind::Media && x.running.load(Ordering::SeqCst)).count().max(1) as u64;
     let global = m.limiter.rate.load(Ordering::Relaxed) / 1024;

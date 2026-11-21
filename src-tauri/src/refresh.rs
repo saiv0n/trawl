@@ -116,9 +116,10 @@ fn fail(m: &Manager, t: &Task, err: &str, why: &str) {
         let mut d = t.d.lock();
         d.status = Status::Error;
         d.stage.clear();
-        d.error = format!("{} {why} Sayfadan yeni bağlantıyı kopyalayıp \"Bağlantıyı güncelle\" ile sürdürebilirsin.", clean_err(err));
+        d.error = format!("{} {why} Sayfadan yeni bağlantıyı kopyalayıp \"Bağlantıyı güncelle\" ile sürdürebilirsiniz.", clean_err(err));
         (d.id.clone(), d.name.clone(), d.error.clone())
     };
+    m.os_notify("İndirilemedi", &name);
     m.notice(serde_json::json!({"type": "error", "id": id, "name": name, "error": msg, "tools": false}));
 }
 

@@ -293,8 +293,20 @@ pub fn clean_err(m: &str) -> String {
     if low.contains("private video") {
         return "Bu video gizli".into();
     }
-    if low.contains("cookie database") || low.contains("failed to decrypt") || low.contains("could not find") && low.contains("cookies") {
-        return "Tarayıcının çerezleri okunamadı. Chrome ve Edge çalışırken çerezlerini kilitliyor; tarayıcıyı kapatıp yeniden deneyin ya da Ayarlar > Video'dan Firefox'u seçin".into();
+    if low.contains("cloudflare") || low.contains("impersonat") || low.contains("anti-bot") {
+        return "Site bot korumasına takıldı (Cloudflare gibi). Sayfayı tarayıcıda açıp eklentinin panelinden indirmeyi deneyin".into();
+    }
+    if low.contains("login required") || low.contains("use --cookies") || low.contains("logged-in") || low.contains("requires authentication") {
+        return "Bu içerik oturum açmayı istiyor. Sayfayı tarayıcıda açıp eklentiyle indirin ya da Ayarlar > Video ve ses'ten tarayıcı çerezlerini seçin".into();
+    }
+    if low.contains("drm") {
+        return "Bu video DRM ile korunuyor, indirilemez".into();
+    }
+    if low.contains("failed to decrypt") || low.contains("app-bound") {
+        return "Chrome ve Edge çerezlerini şifreliyor, okunamıyor. Ayarlar > Video ve ses'ten Firefox'u seçin ya da videoyu sayfadayken eklentiyle indirin".into();
+    }
+    if low.contains("cookie database") || low.contains("could not find") && low.contains("cookies") {
+        return "Tarayıcının çerezleri okunamadı. Tarayıcı açıkken çerezlerini kilitliyor; kapatıp yeniden deneyin".into();
     }
     if low.contains("sign in to confirm") {
         return "Site oturum açma istiyor (yaş ya da bot doğrulaması). Ayarlar > Video'dan tarayıcı çerezlerini kullanmayı açın".into();
@@ -310,6 +322,17 @@ pub fn clean_err(m: &str) -> String {
     }
     if low.contains("http error 403") || low.contains("süresi dolmuş") {
         return "Bağlantının süresi dolmuş. Sayfayı yenileyip bağlantıyı yeniden kopyalayın, sonra Bağlantıyı güncelle'yi kullanın; indirme kaldığı yerden sürer.".into();
+    }
+    if let Some(c) = regex::Regex::new(r"(?:Sunucu |HTTP Error )(\d{3})").unwrap().captures(&m) {
+        match &c[1] {
+            "401" => return "Sunucu kullanıcı adı ve şifre istiyor. Ayarlar > Klasör ve giriş'ten bu site için giriş ekleyin".into(),
+            "403" => return "Sunucu erişimi reddetti (403). Bağlantının süresi dolmuş olabilir; sayfadan yeni bağlantıyı alıp Bağlantıyı güncelle ile sürdürün".into(),
+            "404" | "410" => return "Dosya sunucuda bulunamadı. Kaldırılmış ya da taşınmış olabilir.".into(),
+            "416" => return "Sunucu istenen bölümü veremedi. Baştan indir ile yeniden deneyin".into(),
+            "429" => return "Sunucu çok fazla istek dedi. Biraz bekleyip yeniden deneyin ya da bağlantı sayısını azaltın".into(),
+            "500" | "502" | "503" | "504" => return "Sunucu şu an hata veriyor. Biraz sonra yeniden deneyin".into(),
+            _ => {}
+        }
     }
     if low.contains("(404)") || low.contains("http error 404") {
         return "Dosya sunucuda bulunamadı. Kaldırılmış ya da taşınmış olabilir.".into();

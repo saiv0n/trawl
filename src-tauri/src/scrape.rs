@@ -1,7 +1,7 @@
 //! sayfadaki (istenirse aynı sitedeki alt sayfalardaki) indirilebilir her şeyi bulur
 
 use crate::util::*;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use futures_util::{stream, StreamExt};
 use regex::Regex;
 use scraper::{Html, Selector};
@@ -351,15 +351,17 @@ fn walk_ld(v: &serde_json::Value, c: &mut Collector, title: &str) {
 }
 
 pub async fn fetch_page(url: &str, h: &BTreeMap<String, String>) -> Result<(String, String)> {
-    let mut rb = client()
-        .get(url)
+    // tarayıcı kimliğiyle git, "Trawl/1.0" görünce bir sürü site boş sayfa ya da engel döndürüyor
+    let rb = crate::http::hdrs(client().get(url), h)
         .timeout(Duration::from_secs(25))
         .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         .header("Accept-Language", "tr-TR,tr;q=0.9,en;q=0.8");
-    for (k, v) in h {
-        rb = rb.header(k.as_str(), v.as_str());
-    }
     let r = rb.send().await?;
+    let code = r.status().as_u16();
+    if code >= 400 {
+        // engel sayfasını html diye tarayıp "indirilecek bir şey yok" demeyelim
+        bail!("Site sayfayı açmamıza izin vermedi ({code}). Sayfayı tarayıcıda açıp eklentiyle indirmeyi deneyin");
+    }
     let fin = r.url().to_string();
     let ct = r.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_lowercase();
     if !ct.is_empty() && !ct.contains("html") && !ct.contains("xml") && !ct.contains("text") {
@@ -390,10 +392,7 @@ pub async fn enrich(items: &mut [Item], h: &BTreeMap<String, String>, site: &str
                 h.retain(|k, _| !k.eq_ignore_ascii_case("cookie") && !k.eq_ignore_ascii_case("authorization"));
             }
             async move {
-                let mut rb = client().head(&u).timeout(Duration::from_secs(8));
-                for (k, v) in &h {
-                    rb = rb.header(k.as_str(), v.as_str());
-                }
+                let rb = crate::http::hdrs(client().head(&u), &h).timeout(Duration::from_secs(8));
                 let mut size = 0;
                 let mut mime = String::new();
                 if let Ok(r) = rb.send().await {

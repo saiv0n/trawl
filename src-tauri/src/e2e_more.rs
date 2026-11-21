@@ -81,6 +81,15 @@ async fn stingy(State(s): State<Arc<Srv>>, h: HeaderMap) -> Response {
     r
 }
 
+/// php sitelerinin yaptığı gibi dosya adını ham utf-8 yollar
+async fn turkish(State(s): State<Arc<Srv>>, h: HeaderMap) -> Response {
+    let (a, b) = range_of(&h, s.data.len()).unwrap_or((0, s.data.len() - 1));
+    let mut r = part(&s, a, b);
+    let v = axum::http::HeaderValue::from_bytes("attachment; filename=\"Türkçe ödev.pdf\"".as_bytes()).unwrap();
+    r.headers_mut().insert("content-disposition", v);
+    r
+}
+
 async fn sum(State(s): State<Arc<Srv>>) -> Response {
     Response::builder().status(200).header("content-type", "text/plain").body(Body::from(s.sum.clone())).unwrap()
 }
@@ -93,6 +102,7 @@ async fn serve(s: Srv) -> String {
         .route("/locked.bin", get(locked))
         .route("/f.iso", get(plain))
         .route("/stingy.bin", get(stingy))
+        .route("/download.php", get(turkish))
         .route("/f.iso.sha256", get(sum))
         .with_state(Arc::new(s));
     tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
@@ -272,4 +282,58 @@ fn rules_pick_folder() {
     // klasörsüz ya da koşulsuz kural hiçbir şeyi tutmaz
     assert!(!Rule { exts: "zip".into(), host: String::new(), folder: String::new() }.hits("a.zip", "https://x.test"));
     assert!(!Rule { exts: String::new(), host: String::new(), folder: "D:\\".into() }.hits("a.zip", "https://x.test"));
+}
+
+#[tokio::test]
+async fn raw_utf8_filename_is_kept() {
+    let base = serve(srv(data(1 << 20), 0, String::new())).await;
+    let p = crate::http::probe(&format!("{base}/download.php"), &Default::default()).await.unwrap();
+    assert_eq!(p.name, "Türkçe ödev.pdf");
+}
+
+#[test]
+fn server_errors_read_like_sentences() {
+    use crate::util::clean_err;
+    assert!(clean_err("Sunucu 401 döndü").contains("şifre"));
+    assert!(clean_err("Sunucu 403 döndü").contains("403"));
+    assert!(clean_err("Sunucu 503 döndü").contains("hata veriyor"));
+    assert!(clean_err("ERROR: [generic] Got HTTP Error 403 caused by Cloudflare anti-bot challenge").contains("bot"));
+    assert!(clean_err("ERROR: [instagram] abc: login required").contains("oturum"));
+}
+
+#[tokio::test]
+async fn run_command_after_download() {
+    let dir = tmp("cmd");
+    let f = dir.join("biten dosya.txt");
+    std::fs::write(&f, b"x").unwrap();
+    let cmd = crate::post::expand_cmd("copy {path} {folder}\\kopya.txt", &f.to_string_lossy());
+    let st = tokio::process::Command::new("cmd").raw_arg(format!("/C {cmd}")).status().await.unwrap();
+    assert!(st.success());
+    assert!(dir.join("kopya.txt").exists(), "boşluklu yolda komut çalışmadı");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn browser_cookies_become_a_cookie_file() {
+    let p = crate::media::cookie_file("https://www.instagram.com/p/x/", "sessionid=abc; csrftoken=d=e; bozuk").unwrap();
+    let txt = std::fs::read_to_string(&p).unwrap();
+    let _ = std::fs::remove_file(&p);
+    assert!(txt.starts_with("# Netscape HTTP Cookie File"));
+    assert!(txt.contains(".instagram.com	TRUE	/	TRUE	0	sessionid	abc"));
+    assert!(txt.contains("csrftoken	d=e"));
+    assert!(!txt.contains("bozuk"));
+}
+
+/// eicar sahte virüs dosyası, defender'ın tehdit bulduğu yolu dener. windows bildirim gösterir
+#[tokio::test]
+#[ignore = "defender uyarısı çıkarır, elle çalıştır"]
+async fn defender_flags_eicar() {
+    let dir = tmp("eicar");
+    let p = dir.join("eicar.com");
+    let body = ["X5O!P%@AP[4\\PZX54(P^)7CC)7}$", "EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"].concat();
+    let _ = std::fs::write(&p, body);
+    let r = crate::post::scan(&p.to_string_lossy()).await;
+    eprintln!("defender eicar: {r:?}, dosya duruyor mu: {}", p.exists());
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_ne!(r, Some(true));
 }

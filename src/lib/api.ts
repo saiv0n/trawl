@@ -20,7 +20,7 @@ export interface Settings {
   tools_auto_update: boolean; tools_checked: number; schedule: boolean; schedule_start: string; schedule_stop: string; schedule_days: number[]; scan: boolean; extract: boolean; proxy: string;
   extract_delete: boolean; host_conns: number; alt_limit: boolean; alt_speed: number; alt_start: string; alt_stop: string;
   rules: { exts: string; host: string; folder: string }[]; logins: { host: string; user: string; pass: string }[];
-  cookies_from: string; open_done: boolean; run_cmd: string; auto_hash: boolean; lang: string;
+  cookies_from: string; open_done: boolean; run_cmd: string; auto_hash: boolean; lang: string; focus_on_add: boolean;
 }
 
 export async function call<T = any>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -68,7 +68,7 @@ function mock(cmd: string, args?: any): any {
       if (new URLSearchParams(location.search).has("empty")) return { tasks: [], speed: 0, history: hist.map(() => 0), session: 0, eta_total: -1 };
       return { tasks: demo.concat(bulk), speed: hist[hist.length - 1], history: hist, session: 12_400_000_000, eta_total: 74 };
     case "get_settings":
-      return { folder: "C:\\Users\\me\\Downloads\\Trawl", connections: 8, concurrent: 3, speed_limit: 0, categorize: true, clipboard: true, tray: true, sound: true, notify: true, after_all: "none", auto_resume: true, default_height: 1080, default_container: "mp4", default_codec: "mp3", default_bitrate: 320, intercept: true, min_intercept_kb: 512, intercept_exts: "zip rar 7z exe msi iso mp4 mkv mp3 pdf", intercept_skip: ["drive.google.com"], intercept_ask_mb: 50, accent: "cobalt", theme: new URLSearchParams(location.search).get("theme") || "light", motion: true, motion_mode: "system", density: "default", clipboard_asked: false, tray_told: false, autostart: false, tools_auto_update: true, tools_checked: 0, schedule: false, schedule_start: "02:00", schedule_stop: "08:00", schedule_days: [0, 1, 2, 3, 4, 5, 6], scan: false, extract: false, proxy: "", extract_delete: false, host_conns: 16, alt_limit: false, alt_speed: 1024, alt_start: "09:00", alt_stop: "18:00", rules: [], logins: [], cookies_from: "", open_done: false, run_cmd: "", auto_hash: true, lang: "tr" };
+      return { folder: "C:\\Users\\me\\Downloads\\Trawl", connections: 8, concurrent: 3, speed_limit: 0, categorize: true, clipboard: true, tray: true, sound: true, notify: true, after_all: "none", auto_resume: true, default_height: 1080, default_container: "mp4", default_codec: "mp3", default_bitrate: 320, intercept: true, min_intercept_kb: 512, intercept_exts: "zip rar 7z exe msi iso mp4 mkv mp3 pdf", intercept_skip: ["drive.google.com"], intercept_ask_mb: 50, accent: "cobalt", theme: new URLSearchParams(location.search).get("theme") || "light", motion: true, motion_mode: "system", density: "default", clipboard_asked: false, tray_told: false, autostart: false, tools_auto_update: true, tools_checked: 0, schedule: false, schedule_start: "02:00", schedule_stop: "08:00", schedule_days: [0, 1, 2, 3, 4, 5, 6], scan: false, extract: false, proxy: "", extract_delete: false, host_conns: 16, alt_limit: false, alt_speed: 1024, alt_start: "09:00", alt_stop: "18:00", rules: [], logins: [], cookies_from: "", open_done: false, run_cmd: "", auto_hash: true, lang: "tr", focus_on_add: true };
     case "tools_status":
       return { ytdlp: "C:\\bin\\yt-dlp.exe", ytdlp_version: "2026.10.26", ffmpeg: "C:\\bin\\ffmpeg.exe" };
     case "analyze":

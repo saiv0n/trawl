@@ -109,6 +109,8 @@ pub struct Manager {
     /// zamanlayıcı aralığında mıydık, None henüz bakılmadı
     sched_in: Mutex<Option<bool>>,
     sched_ids: Mutex<std::collections::HashSet<String>>,
+    ui_up: AtomicBool,
+    pending: Mutex<Vec<serde_json::Value>>,
 }
 
 /// o anki genel sınır (KB/s), aralıktaysa ikinci sınır
@@ -188,6 +190,8 @@ impl Manager {
             last_saved: Mutex::new(vec![]),
             sched_in: Mutex::new(None),
             sched_ids: Mutex::new(Default::default()),
+            ui_up: AtomicBool::new(false),
+            pending: Mutex::new(vec![]),
             settings: Mutex::new(sf.settings),
         });
         m.limiter.rate.store(rate_now(&m.settings.lock()) * 1024, Ordering::Relaxed);
@@ -242,8 +246,24 @@ impl Manager {
         }
     }
 
+    /// arayüz henüz dinlemiyorsa (eklenti uygulamayı yeni açtıysa) bekletilir, yoksa kaybolurdu
     pub fn notice(&self, v: serde_json::Value) {
+        if !self.ui_up.load(Ordering::SeqCst) {
+            self.pending.lock().push(v);
+            return;
+        }
         let _ = self.app.emit("notice", v);
+    }
+
+    pub fn ui_ready(&self) {
+        let list = {
+            let mut p = self.pending.lock();
+            self.ui_up.store(true, Ordering::SeqCst);
+            std::mem::take(&mut *p)
+        };
+        for v in list {
+            let _ = self.app.emit("notice", v);
+        }
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -531,6 +551,19 @@ impl Manager {
                         d.retry_at = now() + wait;
                         d.status = Status::Queued;
                         d.stage = "Ağ bekleniyor".into();
+                    } else if format!("{e:#}").contains("parçalı indirmeyi reddetti") && t.d.lock().conns_max != 1 {
+                        // sunucu ortadan parça vermiyor, kullanıcıya bırakmadan tek bağlantıyla baştan al
+                        let mut d = t.d.lock();
+                        if !d.path.is_empty() {
+                            let _ = std::fs::remove_file(format!("{}.trawl", d.path));
+                            d.path.clear();
+                        }
+                        d.conns_max = 1;
+                        d.segs.clear();
+                        d.size = 0;
+                        d.validator.clear();
+                        d.status = Status::Queued;
+                        t.set_done(0);
                     } else {
                         let msg = format!("{e:#}");
                         let (msg, tools) = match msg.strip_prefix("TOOLS:") {
@@ -543,6 +576,7 @@ impl Manager {
                             d.error = msg.clone();
                             d.name.clone()
                         };
+                        m.os_notify("İndirilemedi", &format!("{name}: {msg}"));
                         m.notice(serde_json::json!({"type": "error", "id": id, "name": name, "error": msg, "tools": tools}));
                     }
                 }
@@ -820,7 +854,10 @@ impl Manager {
         self.tasks.lock().iter().find_map(|t| {
             let d = t.d.lock();
             let exists = !d.path.is_empty() && std::path::Path::new(&d.path).exists();
-            let same = d.url == url || (!name.is_empty() && d.status == Status::Done && d.name.eq_ignore_ascii_case(&name) && exists);
+            // sadece adı tutan başka sitenin setup.exe'si yeni indirmeyi engellemesin
+            let src = if d.src.is_empty() { &d.url } else { &d.src };
+            let same_site = host_of(src) == host_of(url) || host_of(&d.page) == host_of(url);
+            let same = d.url == url || d.src == url || (!name.is_empty() && d.status == Status::Done && d.name.eq_ignore_ascii_case(&name) && exists && same_site);
             same.then(|| (d.id.clone(), d.status, exists))
         })
     }

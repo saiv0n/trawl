@@ -167,9 +167,9 @@ pub async fn probe(url: &str, h: &BTreeMap<String, String>) -> Result<Probe> {
     let etag = get("etag");
     let validator = if !etag.is_empty() && !etag.starts_with("W/") { etag } else { get("last-modified") };
     let ctype = get("content-type").split(';').next().unwrap_or("").trim().to_lowercase();
-    let cd = get("content-disposition");
+    let cd = disposition(hd.get("content-disposition").map(|v| v.as_bytes()).unwrap_or_default());
     let mut name = String::new();
-    if let Some(c) = regex::Regex::new(r#"(?i)filename\*\s*=\s*[^']*''([^;]+)"#).unwrap().captures(&cd) {
+    if let Some(c) = regex::Regex::new(r#"(?i)filename\*\s*=\s*[^']*'[^']*'([^;]+)"#).unwrap().captures(&cd) {
         name = percent_encoding::percent_decode_str(c[1].trim_matches(|c| c == '"' || c == ' '))
             .decode_utf8_lossy()
             .to_string();
@@ -187,6 +187,14 @@ pub async fn probe(url: &str, h: &BTreeMap<String, String>) -> Result<Probe> {
         }
     }
     Ok(Probe { url: final_url, size, resumable, name: safe_name(&name), ctype, validator })
+}
+
+/// php sitelerinin çoğu dosya adını ham utf-8 ya da latin-1 yolluyor, to_str() bunu atıyordu
+fn disposition(b: &[u8]) -> String {
+    match std::str::from_utf8(b) {
+        Ok(s) => s.to_string(),
+        Err(_) => b.iter().map(|&c| c as char).collect(),
+    }
 }
 
 pub fn mime_ext(m: &str) -> &'static str {
@@ -665,8 +673,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         eprintln!("inen {done} B, en çok {max_conns} bağlantı, sonda {conns}, hatırlanan sınır {limit:?}, doğrulanan {seg0} B");
         assert!(done > 2 << 20, "yalnızca {done} B indi");
-        assert_eq!(conns, 1);
-        assert_eq!(limit, Some(1));
+        // pixeldrain sınırı zamanla değiştiriyor (önce 1, sonra 4), sabit sayı beklemiyoruz
+        assert!(limit.is_some_and(|l| (1..8).contains(&l)), "sınır öğrenilmedi: {limit:?}");
+        assert!(conns >= 1 && conns <= limit.unwrap(), "sınırdan fazla bağlantı: {conns}");
         assert!(seg0 > 0 && local[..seg0 as usize] == remote[..], "baytlar uyuşmuyor");
     }
 

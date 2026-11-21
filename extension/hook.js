@@ -18,3 +18,10 @@
     true
   );
 })();
+
+// main.js'in içerikten yakaladığı akışları arka plana ilet
+addEventListener("message", (e) => {
+  const d = e.data;
+  if (e.source !== window || !d || d.__trawl !== "manifest" || typeof d.url !== "string" || !chrome.runtime?.id) return;
+  chrome.runtime.sendMessage({ type: "manifest", url: d.url, kind: d.kind === "dash" ? "dash" : "hls" }).catch(() => {});
+});

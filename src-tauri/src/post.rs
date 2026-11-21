@@ -36,6 +36,15 @@ pub(crate) async fn scan(path: &str) -> Option<bool> {
         .output()
         .await
         .ok()?;
+    // gerçek zamanlı koruma dosyayı taramadan önce karantinaya aldıysa mpcmdrun "temiz" diyor
+    if !Path::new(path).exists() {
+        return Some(false);
+    }
+    // yönetici değilken tehdit bulsa da çıkış kodu 0 dönüyor, çıktıdaki sayıya bak
+    let txt = String::from_utf8_lossy(&out.stdout);
+    if let Some(c) = regex::Regex::new(r"found (\d+) threat").unwrap().captures(&txt) {
+        return Some(&c[1] == "0");
+    }
     match out.status.code() {
         Some(0) => Some(true),
         Some(2) => Some(false),
@@ -109,6 +118,7 @@ pub(crate) async fn extract(path: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+pub const GONE: &str = "Dosya indikten hemen sonra kayboldu. Antivirüs karantinaya almış olabilir";
 pub const THREAT: &str = "Windows Defender bu dosyada tehdit buldu, dosya karantinaya alınmış olabilir";
 
 fn stage(t: &Task, s: &str) {
@@ -160,8 +170,11 @@ pub async fn run(m: &Arc<Manager>, t: &Arc<Task>) -> Result<(), String> {
         let src = if d.src.is_empty() { d.url.clone() } else { d.src.clone() };
         (d.path.clone(), src, d.page.clone(), d.name.clone(), d.headers.clone(), d.kind == crate::model::Kind::Http)
     };
-    if path.is_empty() || !Path::new(&path).is_file() {
+    if path.is_empty() {
         return Ok(());
+    }
+    if !Path::new(&path).is_file() {
+        return Err(GONE.into());
     }
     mark_of_web(&path, &url, &page);
     let s = m.settings.lock().clone();

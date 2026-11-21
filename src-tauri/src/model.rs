@@ -463,6 +463,8 @@ pub struct Settings {
     /// sunucuda dosya.sha256 gibi bir sağlama varsa karşılaştır
     pub auto_hash: bool,
     pub lang: String,
+    /// tarayıcıdan indirme gelince pencereyi öne getir
+    pub focus_on_add: bool,
     /// http://, https:// ya da socks5://, boşsa sistem ayarı
     pub proxy: String,
 }
@@ -523,6 +525,7 @@ impl Default for Settings {
             run_cmd: String::new(),
             auto_hash: true,
             lang: "tr".into(),
+            focus_on_add: true,
             proxy: String::new(),
         }
     }

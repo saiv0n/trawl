@@ -51,7 +51,13 @@
   }
   async function open(e?: MouseEvent) {
     e?.stopPropagation();
-    try { await call("open_task", { id: t.id }); } catch (x) { toasts.push({ kind: "error", title: tr("Açılamadı"), body: tr(String(x)) }); }
+    try { await call("open_task", { id: t.id }); }
+    catch (x) {
+      toasts.push({ kind: "error", title: tr("Açılamadı"), body: tr(String(x)), ttl: 8000, actions: [
+        { label: tr("Yeniden indir"), primary: true, run: () => call("restart", { id: t.id }) },
+        { label: tr("Klasörü aç"), run: () => call("open_folder", { path: t.folder }) },
+      ] });
+    }
   }
   function menu(e: MouseEvent) {
     e.preventDefault();

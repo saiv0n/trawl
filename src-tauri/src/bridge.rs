@@ -75,7 +75,32 @@ pub fn show(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
+        // tarayıcı öndeyken windows odak çalmaya izin vermiyor, sadece görev çubuğu yanıp sönüyordu
+        if let Ok(h) = w.hwnd() {
+            force_front(h.0 as _);
+        }
         let _ = w.set_focus();
+    }
+}
+
+fn force_front(h: windows_sys::Win32::Foundation::HWND) {
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg == h {
+            return;
+        }
+        let fg_thread = GetWindowThreadProcessId(fg, std::ptr::null_mut());
+        let me = GetCurrentThreadId();
+        let attached = fg_thread != 0 && fg_thread != me && AttachThreadInput(me, fg_thread, 1) != 0;
+        SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetWindowPos(h, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        BringWindowToTop(h);
+        SetForegroundWindow(h);
+        if attached {
+            AttachThreadInput(me, fg_thread, 0);
+        }
     }
 }
 
@@ -121,6 +146,9 @@ async fn add(State(m): State<Arc<Manager>>, h: HeaderMap, Json(r): Json<AddReq>)
             ..Default::default()
         };
         let id = m.add_media(r.url, opts, r.title, String::new(), String::new(), hd, true);
+        if m.settings.lock().focus_on_add {
+            show(&m.app);
+        }
         return (StatusCode::OK, Json(json!({"ok": true, "id": id})));
     }
     if r.mode == "direct" {
@@ -128,16 +156,21 @@ async fn add(State(m): State<Arc<Manager>>, h: HeaderMap, Json(r): Json<AddReq>)
         if let Some((id, st, exists)) = m.find_dup(&r.url, &r.filename) {
             let done = st == crate::model::Status::Done;
             if !done || exists {
-                let _ = m.app.emit("notice", json!({"type": "dup", "id": id, "done": done, "status": st, "url": r.url, "filename": r.filename, "headers": hd, "page": r.page}));
+                m.notice(json!({"type": "dup", "id": id, "done": done, "status": st, "url": r.url, "filename": r.filename, "headers": hd, "page": r.page}));
+                show(&m.app);
                 return (StatusCode::OK, Json(json!({"ok": true, "id": id, "dup": true})));
             }
         }
         // POST'ta sunucu formu her istekte yeniden işliyor, tek bağlantı daha güvenli
         let conns = if hd.contains_key(crate::util::BODY_KEY) { 1 } else { 0 };
         let id = m.add_http(r.url, r.filename, hd, String::new(), conns, true, r.page);
+        if m.settings.lock().focus_on_add {
+            show(&m.app);
+            m.notice(json!({"type": "added", "id": id}));
+        }
         return (StatusCode::OK, Json(json!({"ok": true, "id": id})));
     }
-    let _ = m.app.emit("notice", json!({"type": "external", "url": r.url, "headers": hd, "filename": r.filename, "title": r.title, "size": r.size}));
+    m.notice(json!({"type": "external", "url": r.url, "headers": hd, "filename": r.filename, "title": r.title, "size": r.size}));
     show(&m.app);
     (StatusCode::OK, Json(json!({"ok": true})))
 }
@@ -146,7 +179,7 @@ async fn grab(State(m): State<Arc<Manager>>, h: HeaderMap, Json(v): Json<Value>)
     if !allowed(&h) {
         return (StatusCode::FORBIDDEN, Json(json!({"ok": false})));
     }
-    let _ = m.app.emit("notice", json!({"type": "grab", "data": v}));
+    m.notice(json!({"type": "grab", "data": v}));
     show(&m.app);
     (StatusCode::OK, Json(json!({"ok": true})))
 }

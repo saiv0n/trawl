@@ -13,7 +13,7 @@ export const CATS: Record<string, { label: string; icon: string }> = {
 export const ACTIVE = new Set(["downloading", "probing", "processing"]);
 
 type Modal =
-  | { type: "add"; url?: string; headers?: Record<string, string> }
+  | { type: "add"; url?: string; headers?: Record<string, string>; filename?: string; external?: boolean }
   | { type: "grab"; data: any }
   | { type: "settings"; tab?: string }
   | { type: "ext" }

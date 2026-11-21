@@ -13,7 +13,8 @@ const UA = navigator.userAgent;
 const BROWSER = /Firefox\//.test(UA) ? "firefox" : /Edg\//.test(UA) ? "edge" : /OPR\//.test(UA) ? "opera" : /Vivaldi/.test(UA) ? "vivaldi" : navigator.brave ? "brave" : "chrome";
 const VERSION = chrome.runtime.getManifest().version;
 // uygulama kapalıyken de kuralları bilelim diye saklıyorum
-chrome.storage.local.get("cfg").then((s) => { if (s.cfg && !alive.known) alive = { ...alive, ...s.cfg, ok: false, at: 0, known: true }; }).catch(() => {});
+// servis çalışanı uyanınca kurallar okunmadan karar verilmesin, uygulama kapalıyken indirme kaçıyordu
+const cfgReady = chrome.storage.local.get("cfg").then((s) => { if (s.cfg && !alive.known) alive = { ...alive, ...s.cfg, ok: false, at: 0, known: true }; }).catch(() => {});
 
 function adopt(j) {
   const cfg = { intercept: j.intercept, min_kb: j.min_kb ?? 512, proto: j.proto || 1, exts: j.exts || [], skip: j.skip || [], ask_mb: j.ask_mb || 0 };
@@ -158,7 +159,7 @@ function extOf(s) {
 }
 function dispName(cd) {
   if (!cd) return "";
-  let m = cd.match(/filename\*\s*=\s*[^']*''([^;]+)/i);
+  let m = cd.match(/filename\*\s*=\s*[^']*'[^']*'([^;]+)/i);
   if (m) try { return decodeURIComponent(m[1].replace(/"/g, "").trim()); } catch {}
   m = cd.match(/filename\s*=\s*"?([^";]+)"?/i);
   return m ? m[1].trim() : "";
@@ -337,6 +338,7 @@ const extOfName = (n) => ((n || "").split(/[\\/]/).pop().match(/\.([a-z0-9]{1,8}
 async function decide(item) {
   const url = item.finalUrl || item.url;
   if (!/^https?:/.test(url) || item.byExtensionId === chrome.runtime.id) return null;
+  await cfgReady;
   // uygulama kapalı, son kurallarla karar ver. uyuyorsa aşağıda açtırılıyor
   if (!(await ping()) && !alive.known) return null;
   if (!alive.intercept) return null;
@@ -694,6 +696,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       const r = await send("/site", { host: msg.host, skip: msg.skip });
       if (r?.skip) alive.skip = r.skip;
       reply({ ok: !!r });
+    } else if (msg.type === "manifest" && sender.tab && /^https?:/.test(msg.url || "")) {
+      // uzantısız ya da yanlış türle gelen m3u8/mpd, sayfanın içinden yakalandı
+      const ct = msg.kind === "dash" ? "application/dash+xml" : "application/vnd.apple.mpegurl";
+      const d = { url: msg.url, statusCode: 200, responseHeaders: [{ name: "content-type", value: ct }], tabId: sender.tab.id, frameId: sender.frameId || 0, initiator: sender.origin || "" };
+      await capture(d, urlHdr.get(msg.url) || {}).catch(() => {});
+      reply({ ok: true });
     } else if (msg.type === "yt") {
       reply({ ok: await sendUrl(msg.url, { referer: sender.tab?.url || "", title: msg.title || "", mode: msg.mode || "ask" }) });
     }

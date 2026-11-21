@@ -237,7 +237,7 @@ fn clear_done(m: M) {
 
 #[tauri::command]
 fn open_task(m: M, id: String) -> R<()> {
-    let (p, _) = m.path_of(&id).ok_or("yok")?;
+    let (p, _) = m.path_of(&id).ok_or("İndirme bulunamadı")?;
     if !std::path::Path::new(&p).exists() {
         return Err("Dosya bulunamadı, taşınmış ya da silinmiş olabilir".into());
     }
@@ -246,7 +246,7 @@ fn open_task(m: M, id: String) -> R<()> {
 
 #[tauri::command]
 fn reveal_task(m: M, id: String) -> R<()> {
-    let (p, folder) = m.path_of(&id).ok_or("yok")?;
+    let (p, folder) = m.path_of(&id).ok_or("İndirme bulunamadı")?;
     if std::path::Path::new(&p).exists() {
         std::process::Command::new("explorer").arg(format!("/select,{}", p.replace('/', "\\"))).spawn().map_err(e)?;
     } else {
@@ -319,7 +319,8 @@ fn ext_folder(app: AppHandle) -> String {
 }
 
 #[tauri::command]
-fn ui_ready(app: AppHandle) {
+fn ui_ready(app: AppHandle, m: M) {
+    m.ui_ready();
     if !std::env::args().any(|a| a == "--tray") {
         bridge::show(&app);
     }
@@ -442,7 +443,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, argv, _| {
             bridge::show(app);
             if let Some(u) = argv.iter().find(|a| a.starts_with("http")) {
-                let _ = app.emit("notice", json!({"type": "external", "url": u}));
+                app.state::<Arc<Manager>>().notice(json!({"type": "external", "url": u}));
             }
         }))
         .plugin(tauri_plugin_dialog::init())
@@ -485,11 +486,8 @@ pub fn run() {
                 .build(app)?;
             let args: Vec<String> = std::env::args().collect();
             if let Some(u) = args.iter().find(|a| a.starts_with("http")).cloned() {
-                let h = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-                    let _ = h.emit("notice", json!({"type": "external", "url": u}));
-                });
+                // arayüz hazır olunca kuyruktan gider
+                app.state::<Arc<Manager>>().notice(json!({"type": "external", "url": u}));
             }
             Ok(())
         })

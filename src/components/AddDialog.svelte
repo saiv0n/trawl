@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import Icon from "./Icon.svelte";
   import Grabber from "./Grabber.svelte";
   import { call, inTauri } from "../lib/api";
@@ -7,7 +7,9 @@
   import { bytes, dur, compact, host, qlabel, ago, expandBatch } from "../lib/fmt";
   import { t } from "../lib/i18n.svelte";
 
-  let { url = "", headers = {}, onclose }: { url?: string; headers?: Record<string, string>; onclose: () => void } = $props();
+  let { url = "", headers = {}, filename = "", external = false, onclose }: { url?: string; headers?: Record<string, string>; filename?: string; external?: boolean; onclose: () => void } = $props();
+  let added = false;
+  let goBtn = $state<HTMLButtonElement>();
 
   // svelte-ignore state_referenced_locally
   let input = $state(url);
@@ -73,7 +75,8 @@
         height = vids.find((v: any) => v.height <= want)?.height ?? vids[0]?.height ?? want;
         if (res.kind === "playlist") picked = new Set(res.media.entries.map((_: any, i: number) => i));
       }
-      if (res.kind === "http") name = res.http.name;
+      // tarayıcının bildiği ad sunucunun "download.php"sinden iyidir
+      if (res.kind === "http") name = filename || res.http.name;
       phase = res.kind;
     } catch (e: any) {
       const msg = String(e);
@@ -97,6 +100,7 @@
   const opts = () => ({ mode, height: mode === "video" ? height : 0, container, codec, bitrate: lossless ? 0 : bitrate, subs, chapters, sponsorblock: sponsor });
 
   async function go(start = true) {
+    added = true;
     if (phase === "media") {
       await call("add", { p: { kind: "media", url: m.url, title: m.title, thumb: m.thumb, folder, headers, opts: opts(), start } });
     } else if (phase === "playlist") {
@@ -136,6 +140,24 @@
     catch (e) { err = String(e); phase = "error"; }
   }
 
+  // tarayıcı kendi indirmesini çoktan sildi; pencere kapanırsa indirme kaybolmasın
+  onDestroy(() => {
+    if (external && !added && url) {
+      call("add", { p: { kind: "http", url, name: filename || name || "", headers, start: false } });
+      toasts.push({ kind: "ok", title: t("Listeye duraklatılmış olarak eklendi"), body: filename || host(url) });
+    }
+  });
+  // sonuç gelince Enter doğrudan indirsin
+  $effect(() => {
+    if (["http", "media", "playlist", "batch"].includes(phase)) tick().then(() => goBtn?.focus());
+  });
+  function keydown(e: KeyboardEvent) {
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+    const el = e.target as HTMLElement;
+    if (el.tagName === "TEXTAREA" || (el.tagName === "BUTTON" && el !== goBtn)) return;
+    if (["http", "media", "playlist", "batch"].includes(phase)) { e.preventDefault(); go(true); }
+  }
+
   onMount(async () => {
     if (url) analyze(url);
     else {
@@ -150,7 +172,8 @@
 {#if phase === "page"}
   <Grabber data={res.page} {headers} {onclose} standalone />
 {:else}
-<div class="dlg">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="dlg" onkeydown={keydown}>
   <header>
     <div class="ht">
       <h2>{t(TITLES[phase])}</h2>
@@ -305,7 +328,7 @@
     <footer class="bar">
       <button class="folder" onclick={pickFolder} data-tip={t("Klasörü değiştir")}><Icon n="folder" size={14} /><span class="mono ellip">{folder || (s.categorize ? t("Türüne göre klasörler") : s.folder)}</span></button>
       <button class="btn btn-lg" onclick={() => go(false)}>{t("Sıraya ekle")}</button>
-      <button class="btn btn-primary btn-lg" onclick={() => go(true)}><Icon n="down" size={14} />{t("İndir")}</button>
+      <button class="btn btn-primary btn-lg" bind:this={goBtn} onclick={() => go(true)}><Icon n="down" size={14} />{t("İndir")}</button>
     </footer>
   {:else if phase === "http"}
     {@const c = CATS[res.category] || CATS.diger}
@@ -337,7 +360,7 @@
     <footer class="bar">
       <button class="folder" onclick={pickFolder} data-tip={t("Klasörü değiştir")}><Icon n="folder" size={14} /><span class="mono ellip">{defFolder}</span></button>
       <button class="btn btn-lg" onclick={() => go(false)}>{t("Sıraya ekle")}</button>
-      <button class="btn btn-primary btn-lg" onclick={() => go(true)}><Icon n="down" size={14} />{t("İndir")}</button>
+      <button class="btn btn-primary btn-lg" bind:this={goBtn} onclick={() => go(true)}><Icon n="down" size={14} />{t("İndir")}</button>
     </footer>
   {/if}
 </div>
