@@ -1,0 +1,47 @@
+[package]
+name = "trawl"
+version = "1.0.0"
+edition = "2021"
+description = "Trawl Download Manager"
+
+[lib]
+name = "trawl_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "gzip", "brotli", "deflate", "json"] }
+futures-util = "0.3"
+scraper = "0.20"
+regex = "1"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+parking_lot = "0.12"
+anyhow = "1"
+percent-encoding = "2"
+axum = "0.7"
+tower-http = { version = "0.6", features = ["cors"] }
+arboard = "3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+html-escape = "0.2"
+windows-sys = { version = "0.59", features = ["Win32_System_DataExchange", "Win32_System_Threading", "Win32_Storage_FileSystem", "Win32_System_Registry"] }
+trash = "5"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true
+panic = "abort"
