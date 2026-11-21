@@ -5,7 +5,8 @@
   addEventListener(
     "click",
     (e) => {
-      if (window.__trawlHook !== ME || !chrome.runtime?.id) return;
+      // sayfanın kendi ürettiği sahte tıklama sayılmasın
+      if (!e.isTrusted || window.__trawlHook !== ME || !chrome.runtime?.id) return;
       if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
       const a = e.composedPath().find((n) => n instanceof HTMLAnchorElement || n instanceof HTMLAreaElement);
       const href = a?.href;

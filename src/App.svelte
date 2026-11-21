@@ -322,7 +322,7 @@
               <div class="spacer" style="height:{list.length * rowH}px">
                 <div class="win" style="transform:translateY({first * rowH}px)">
                   <!-- satırlar konuma göre yeniden kullanılıyor, kaydırınca sadece veri değişir -->
-                  {#each slice as t}
+                  {#each slice as t (t.id)}
                     <TaskRow {t} {nameW} />
                   {/each}
                 </div>

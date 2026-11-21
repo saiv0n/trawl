@@ -373,7 +373,22 @@ fn clipboard_watch(m: Arc<Manager>) {
     });
 }
 
+fn crash_log() {
+    // panic=abort olduğundan iz kalmıyordu, son nefeste dosyaya yaz
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let bt = std::backtrace::Backtrace::force_capture();
+        let line = format!("[{}] {info}\n{bt}\n\n", model::now());
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(data_dir().join("crash.log")) {
+            use std::io::Write;
+            let _ = f.write_all(line.as_bytes());
+        }
+        prev(info);
+    }));
+}
+
 pub fn run() {
+    crash_log();
     // native messaging host olarak açıldıysak arayüz yok, sadece köprü
     if let Some(origin) = native::host_origin() {
         native::run_host(origin);
