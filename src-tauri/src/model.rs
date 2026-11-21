@@ -92,6 +92,8 @@ pub struct TaskData {
     pub retry_at: i64,
     /// sunucudaki sağlamayla karşılaştırıldıysa algoritma adı
     pub verified: String,
+    /// yönlendirmeden önceki adres, yan dosyadaki sağlama buradan aranır
+    pub src: String,
     pub stage: String,
     pub was_active: bool,
     /// otomatik tazeleme denendi mi, döngüye girmesin
@@ -128,6 +130,7 @@ impl Default for TaskData {
             net_retries: 0,
             retry_at: 0,
             verified: String::new(),
+            src: String::new(),
             stage: String::new(),
             was_active: false,
             refresh_tries: 0,

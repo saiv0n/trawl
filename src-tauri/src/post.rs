@@ -67,6 +67,21 @@ fn extract_dir(path: &Path) -> PathBuf {
     d
 }
 
+/// arşivin içinde tek klasör varsa klasör/klasör diye iç içe kalmasın
+fn flatten(dir: &Path) {
+    let items: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(r) => r.flatten().collect(),
+        Err(_) => return,
+    };
+    if items.len() != 1 || !items[0].path().is_dir() {
+        return;
+    }
+    let tmp = dir.with_extension("trawl-ac");
+    if std::fs::rename(items[0].path(), &tmp).is_ok() && std::fs::remove_dir(dir).is_ok() {
+        let _ = std::fs::rename(&tmp, dir);
+    }
+}
+
 /// windows 10'dan beri gelen tar.exe zip'i, windows 11'dekisi 7z ve rar'ı da açıyor
 pub(crate) async fn extract(path: &str) -> Result<PathBuf, String> {
     let sys = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
@@ -90,6 +105,7 @@ pub(crate) async fn extract(path: &str) -> Result<PathBuf, String> {
         let msg = String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("").trim().to_string();
         return Err(if msg.is_empty() { "arşiv açılamadı".into() } else { msg });
     }
+    flatten(&dir);
     Ok(dir)
 }
 
@@ -141,7 +157,8 @@ pub fn expand_cmd(cmd: &str, path: &str) -> String {
 pub async fn run(m: &Arc<Manager>, t: &Arc<Task>) -> Result<(), String> {
     let (path, url, page, name, headers, http) = {
         let d = t.d.lock();
-        (d.path.clone(), d.url.clone(), d.page.clone(), d.name.clone(), d.headers.clone(), d.kind == crate::model::Kind::Http)
+        let src = if d.src.is_empty() { d.url.clone() } else { d.src.clone() };
+        (d.path.clone(), src, d.page.clone(), d.name.clone(), d.headers.clone(), d.kind == crate::model::Kind::Http)
     };
     if path.is_empty() || !Path::new(&path).is_file() {
         return Ok(());

@@ -66,6 +66,21 @@ async fn plain(State(s): State<Arc<Srv>>, h: HeaderMap) -> Response {
     part(&s, a, b)
 }
 
+/// ikiden fazla eşzamanlı isteği reddetmeden sonsuza kadar bekletir
+async fn stingy(State(s): State<Arc<Srv>>, h: HeaderMap) -> Response {
+    let (a, b) = range_of(&h, s.data.len()).unwrap();
+    if a == 0 && b == 0 {
+        return part(&s, 0, 0);
+    }
+    if s.hits.fetch_add(1, Ordering::SeqCst) >= 2 {
+        s.hits.fetch_sub(1, Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+    }
+    let r = part(&s, a, b);
+    s.hits.fetch_sub(1, Ordering::SeqCst);
+    r
+}
+
 async fn sum(State(s): State<Arc<Srv>>) -> Response {
     Response::builder().status(200).header("content-type", "text/plain").body(Body::from(s.sum.clone())).unwrap()
 }
@@ -77,6 +92,7 @@ async fn serve(s: Srv) -> String {
         .route("/flaky.bin", get(flaky))
         .route("/locked.bin", get(locked))
         .route("/f.iso", get(plain))
+        .route("/stingy.bin", get(stingy))
         .route("/f.iso.sha256", get(sum))
         .with_state(Arc::new(s));
     tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
@@ -118,6 +134,18 @@ async fn short_outage_with_many_connections() {
     let dir = tmp("flaky");
     let t = task(format!("{base}/flaky.bin"), &dir);
     run_with(t.clone(), Arc::new(Limiter::new()), 4).await.unwrap();
+    assert_eq!(std::fs::read(&t.d.lock().path).unwrap(), want);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// eskiden fazla bağlantılar cevapsız kalınca indirme sonsuza dek takılıyordu
+#[tokio::test]
+async fn silent_connection_limit_does_not_hang() {
+    let want = data(4 << 20);
+    let base = serve(srv(want.clone(), 0, String::new())).await;
+    let dir = tmp("stingy");
+    let t = task(format!("{base}/stingy.bin"), &dir);
+    tokio::time::timeout(std::time::Duration::from_secs(90), run_with(t.clone(), Arc::new(Limiter::new()), 6)).await.expect("takıldı").unwrap();
     assert_eq!(std::fs::read(&t.d.lock().path).unwrap(), want);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -205,6 +233,14 @@ async fn windows_tar_extracts_zip() {
     // ikinci kez açınca üstüne yazmasın
     let out2 = crate::post::extract(&dir.join("p.zip").to_string_lossy()).await.unwrap();
     assert_eq!(out2, dir.join("p (2)"));
+    // içinde tek klasör olan arşiv iç içe açılmasın
+    std::fs::create_dir_all(dir.join("paket").join("alt")).unwrap();
+    std::fs::write(dir.join("paket").join("alt").join("b.txt"), b"x").unwrap();
+    let st = std::process::Command::new(r"C:\Windows\System32\tar.exe").current_dir(&dir).args(["-a", "-cf", "paket.zip", "paket"]).status().unwrap();
+    assert!(st.success());
+    std::fs::remove_dir_all(dir.join("paket")).unwrap();
+    let out3 = crate::post::extract(&dir.join("paket.zip").to_string_lossy()).await.unwrap();
+    assert!(out3.join("alt").join("b.txt").exists(), "iç içe açıldı");
     // bozuk arşiv hata versin, boş klasör kalmasın
     std::fs::write(dir.join("bozuk.zip"), b"zip degil").unwrap();
     assert!(crate::post::extract(&dir.join("bozuk.zip").to_string_lossy()).await.is_err());

@@ -236,6 +236,9 @@ pub async fn run_with(t: Arc<Task>, lim: Arc<Limiter>, conns: u32) -> Result<()>
             bail!("Bu bağlantı bir dosya değil, bir web sayfası");
         }
         let mut d = t.d.lock();
+        if d.src.is_empty() && p.url != d.url {
+            d.src = d.url.clone();
+        }
         d.url = p.url;
         d.size = p.size;
         d.resumable = p.resumable;
@@ -302,7 +305,10 @@ async fn single(t: &Arc<Task>, lim: &Arc<Limiter>, part: &PathBuf) -> Result<()>
     t.set_done(0);
     t.conns.store(1, Ordering::Relaxed);
     let tok = t.token();
-    let r = rq(&url, &h).send().await?.error_for_status()?;
+    let r = tokio::time::timeout(Duration::from_secs(30), rq(&url, &h).send())
+        .await
+        .map_err(|_| anyhow!("Sunucu yanıt vermiyor (zaman aşımı)"))??
+        .error_for_status()?;
     let expect = match t.d.lock().size {
         0 => r.content_length().unwrap_or(0),
         n => n,
@@ -483,7 +489,20 @@ async fn fetch(t: &Arc<Task>, lim: &Arc<Limiter>, f: &std::fs::File, i: usize) -
             if !validator.is_empty() {
                 rb = rb.header("If-Range", validator.as_str());
             }
-            let r = rb.send().await?;
+            // bazı sunucular fazla bağlantıyı reddetmek yerine cevapsız bekletiyor
+            let r = match tokio::time::timeout(Duration::from_secs(20), rb.send()).await {
+                Ok(r) => r?,
+                Err(_) => {
+                    let others = t.conns.load(Ordering::Relaxed).saturating_sub(1);
+                    if others > 0 {
+                        let mut l = host_limits().lock();
+                        let e = l.entry(host_of(&url)).or_insert((u32::MAX, std::time::Instant::now()));
+                        *e = (e.0.min(others), std::time::Instant::now());
+                        return Err(anyhow!("SHRINK"));
+                    }
+                    return Err(anyhow!("zaman aşımı"));
+                }
+            };
             let code = r.status().as_u16();
             // If-Range tutmazsa sunucu bütün dosyayı 200 ile yollar, eski parçalarla karışmasın
             let echoed = ["etag", "last-modified"].iter().any(|k| r.headers().get(*k).and_then(|v| v.to_str().ok()) == Some(validator.as_str()));
