@@ -35,13 +35,13 @@ fn host_used() -> &'static parking_lot::Mutex<std::collections::HashMap<String, 
 }
 
 /// sunucudan pay alır, düşünce geri verir. en az bir bağlantı her zaman var
-struct HostShare {
+pub(crate) struct HostShare {
     host: String,
-    n: u32,
+    pub(crate) n: u32,
 }
 
 impl HostShare {
-    fn take(host: String, want: u32) -> Self {
+    pub(crate) fn take(host: String, want: u32) -> Self {
         let total = HOST_CONNS.load(Ordering::Relaxed);
         let mut u = host_used().lock();
         let used = u.entry(host.clone()).or_insert(0);

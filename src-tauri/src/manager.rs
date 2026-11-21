@@ -846,6 +846,17 @@ impl Manager {
 mod tests {
     use super::in_window;
 
+    /// eski sürümün kaydı yeni alanlar olmadan açılmalı, varsayılanlar gelmeli
+    #[test]
+    fn old_state_gets_new_defaults() {
+        let old = r#"{"settings":{"folder":"D:/x","connections":8,"speed_limit":0,"schedule":false},"tasks":[{"id":"a","kind":"http","url":"https://x.test/a.zip","status":"paused","size":10,"done":5}]}"#;
+        let sf: super::StateFile = serde_json::from_str(old).unwrap();
+        let s = &sf.settings;
+        assert_eq!((s.host_conns, s.auto_hash, s.lang.as_str(), s.schedule_days.len()), (16, true, "tr", 7));
+        assert!(s.rules.is_empty() && s.logins.is_empty() && !s.scan && !s.extract);
+        assert_eq!((sf.tasks[0].speed_limit, sf.tasks[0].net_retries, sf.tasks[0].retry_at), (0, 0, 0));
+    }
+
     #[test]
     fn schedule_window() {
         assert!(in_window("02:30", "02:00", "06:00"));

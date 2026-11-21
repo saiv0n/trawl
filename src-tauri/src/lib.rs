@@ -12,6 +12,8 @@ mod tools;
 mod util;
 #[cfg(test)]
 mod e2e_tests;
+#[cfg(test)]
+mod e2e_more;
 
 use manager::{Manager, Snapshot};
 use model::{MediaOpts, Settings};

@@ -28,7 +28,7 @@ fn defender() -> Option<PathBuf> {
 }
 
 /// Some(true) temiz, Some(false) tehdit bulundu, None taranamadı
-async fn scan(path: &str) -> Option<bool> {
+pub(crate) async fn scan(path: &str) -> Option<bool> {
     let exe = defender()?;
     let out = tokio::process::Command::new(exe)
         .args(["-Scan", "-ScanType", "3", "-File", path])
@@ -68,7 +68,7 @@ fn extract_dir(path: &Path) -> PathBuf {
 }
 
 /// windows 10'dan beri gelen tar.exe zip'i, windows 11'dekisi 7z ve rar'ı da açıyor
-async fn extract(path: &str) -> Result<PathBuf, String> {
+pub(crate) async fn extract(path: &str) -> Result<PathBuf, String> {
     let sys = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     let tar = PathBuf::from(sys).join("System32").join("tar.exe");
     if !tar.exists() {
@@ -110,7 +110,7 @@ fn pick_sum(body: &str, name: &str, len: usize) -> Option<String> {
 }
 
 /// sunucuda dosya.sha256 gibi bir yan dosya varsa getir
-async fn sidecar_sum(url: &str, name: &str, h: &std::collections::BTreeMap<String, String>) -> Option<String> {
+pub(crate) async fn sidecar_sum(url: &str, name: &str, h: &std::collections::BTreeMap<String, String>) -> Option<String> {
     if url.contains('?') || url.contains('#') {
         return None;
     }
