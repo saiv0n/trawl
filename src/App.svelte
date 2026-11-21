@@ -155,6 +155,9 @@
       case "grab":
         store.modal = { type: "grab", data: n.data };
         break;
+      case "bridge":
+        toasts.push({ kind: "warn", title: "Eklenti köprüsü açılamadı", body: n.error, ttl: 20000 });
+        break;
       case "after_all":
         toasts.push({ kind: "warn", title: n.action === "shutdown" ? "Bilgisayar 60 sn içinde kapanacak" : "Tüm indirmeler bitti", ttl: 60000, actions: n.action === "shutdown" ? [{ label: "İptal et", primary: true, run: () => call("cancel_shutdown") }] : [] });
         break;

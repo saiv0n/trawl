@@ -251,3 +251,123 @@ mod tests {
         assert!(m.starts_with("Diskte yer kalmadı (C: · 120,0 MB boş, 2,1 GB gerekli)"), "{m}");
     }
 }
+
+const SEALED: &str = "dpapi:";
+
+fn sensitive(k: &str) -> bool {
+    k.eq_ignore_ascii_case("cookie") || k.eq_ignore_ascii_case("authorization")
+}
+
+fn dpapi(data: &[u8], seal: bool) -> Option<Vec<u8>> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::*;
+    let inp = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
+    let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+    let ok = unsafe {
+        if seal {
+            CryptProtectData(&inp, std::ptr::null(), std::ptr::null(), std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+        } else {
+            CryptUnprotectData(&inp, std::ptr::null_mut(), std::ptr::null(), std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+        }
+    };
+    if ok == 0 {
+        return None;
+    }
+    let v = unsafe { std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec() };
+    unsafe { LocalFree(out.pbData.cast()) };
+    Some(v)
+}
+
+/// çerez ve yetki başlıkları diske kullanıcıya bağlı şifreli gider
+pub fn seal_headers(h: &mut std::collections::BTreeMap<String, String>) {
+    for (k, v) in h.iter_mut() {
+        if sensitive(k) && !v.starts_with(SEALED) {
+            if let Some(b) = dpapi(v.as_bytes(), true) {
+                *v = format!("{SEALED}{}", b.iter().map(|x| format!("{x:02x}")).collect::<String>());
+            }
+        }
+    }
+}
+
+pub fn unseal_headers(h: &mut std::collections::BTreeMap<String, String>) {
+    h.retain(|_, v| {
+        let Some(hex) = v.strip_prefix(SEALED) else { return true };
+        let bytes: Option<Vec<u8>> = (0..hex.len()).step_by(2).map(|i| hex.get(i..i + 2).and_then(|x| u8::from_str_radix(x, 16).ok())).collect();
+        match bytes.and_then(|b| dpapi(&b, false)).and_then(|b| String::from_utf8(b).ok()) {
+            Some(s) => {
+                *v = s;
+                true
+            }
+            // başka kullanıcının ya da makinenin kaydı, açılamıyorsa at
+            None => false,
+        }
+    });
+}
+
+#[cfg(test)]
+mod seal_tests {
+    #[test]
+    fn cookie_roundtrip() {
+        let mut h = std::collections::BTreeMap::from([("Cookie".to_string(), "s=1; t=2".to_string()), ("Referer".to_string(), "https://a.test/".to_string())]);
+        super::seal_headers(&mut h);
+        assert!(h["Cookie"].starts_with("dpapi:") && !h["Cookie"].contains("s=1"));
+        assert_eq!(h["Referer"], "https://a.test/");
+        super::unseal_headers(&mut h);
+        assert_eq!(h["Cookie"], "s=1; t=2");
+    }
+}
+
+/// alt süreçleri (yt-dlp'nin açtığı ffmpeg dahil) birlikte öldürmek için iş nesnesi.
+/// tutamaç kapanınca, uygulama çökse bile, içindekiler de kapanır
+pub struct ProcJob(windows_sys::Win32::Foundation::HANDLE);
+unsafe impl Send for ProcJob {}
+unsafe impl Sync for ProcJob {}
+
+impl ProcJob {
+    pub fn new() -> Option<Self> {
+        use windows_sys::Win32::System::JobObjects::*;
+        unsafe {
+            let h = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if h.is_null() {
+                return None;
+            }
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let p = (&info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast();
+            SetInformationJobObject(h, JobObjectExtendedLimitInformation, p, std::mem::size_of_val(&info) as u32);
+            Some(Self(h))
+        }
+    }
+    pub fn add(&self, c: &tokio::process::Child) {
+        if let Some(p) = c.raw_handle() {
+            unsafe { windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(self.0, p as _) };
+        }
+    }
+    pub fn kill(&self) {
+        unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1) };
+    }
+}
+
+impl Drop for ProcJob {
+    fn drop(&mut self) {
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+    }
+}
+
+#[cfg(test)]
+mod job_tests {
+    #[tokio::test]
+    async fn job_kill_takes_grandchildren() {
+        // cmd'nin açtığı ping torun süreç; iş nesnesi ikisini birden kapatmalı
+        let mut ch = tokio::process::Command::new("cmd").args(["/c", "ping -n 30 127.0.0.1 >nul"]).creation_flags(super::NO_WINDOW).spawn().unwrap();
+        let job = super::ProcJob::new().unwrap();
+        job.add(&ch);
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let t = std::time::Instant::now();
+        job.kill();
+        let _ = ch.wait().await;
+        assert!(t.elapsed().as_secs() < 3);
+        let out = std::process::Command::new("tasklist").args(["/fi", &format!("PID eq {}", ch.id().unwrap_or(0))]).output().unwrap();
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("cmd.exe"));
+    }
+}

@@ -14,13 +14,23 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 pub const PORT: u16 = 47321;
 
+// chromium'da kimlik sabit, başka eklenti köprüyü kullanamasın. firefox her kurulumda rastgele uuid veriyor, orada kimlikle kilitlenemiyor
 fn ext_origin(o: &str) -> bool {
-    o.starts_with("chrome-extension://") || o.starts_with("moz-extension://") || o.starts_with("extension://")
+    let o = o.trim_end_matches('/');
+    match o.strip_prefix("chrome-extension://") {
+        Some(id) => crate::native::CHROME_IDS.contains(&id),
+        None => o.starts_with("moz-extension://"),
+    }
 }
 
 // eklenti her POST'a Origin ekliyor; Origin'siz olanı (yerel betik vs.) ve web sayfasından geleni reddet
 fn allowed(h: &HeaderMap) -> bool {
     h.get("origin").and_then(|v| v.to_str().ok()).map(ext_origin).unwrap_or(false)
+}
+
+// GET'te Origin her zaman gelmiyor. özel başlığı web sayfası ön kontrolsüz gönderemez, ön kontrolü de cors reddediyor
+fn from_ext(h: &HeaderMap) -> bool {
+    allowed(h) || h.contains_key("x-trawl")
 }
 
 #[derive(Deserialize, Default)]
@@ -71,6 +81,9 @@ pub fn show(app: &tauri::AppHandle) {
 
 async fn ping(State(m): State<Arc<Manager>>, h: HeaderMap, Query(q): Query<BTreeMap<String, String>>) -> Json<Value> {
     // ping'de sürüm ve tarayıcı da geliyor (GET'te Origin her zaman olmuyor)
+    if !from_ext(&h) {
+        return Json(json!({"app": "Trawl"}));
+    }
     if let Some(v) = q.get("v") {
         if let Some(ua) = h.get("user-agent").and_then(|v| v.to_str().ok()) {
             crate::util::set_browser_ua(ua);
@@ -194,7 +207,7 @@ pub async fn serve(m: Arc<Manager>) {
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|o: &HeaderValue, _| o.to_str().map(ext_origin).unwrap_or(false)))
         .allow_methods([Method::GET, Method::POST])
-        .allow_headers([axum::http::header::CONTENT_TYPE]);
+        .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::HeaderName::from_static("x-trawl")]);
     let app = Router::new()
         .route("/ping", get(ping))
         .route("/add", post(add))
@@ -205,11 +218,33 @@ pub async fn serve(m: Arc<Manager>) {
         .route("/refresh-result", post(refresh_result))
         .route("/show", post(show_req))
         .layer(cors)
-        .with_state(m);
-    match tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await {
-        Ok(l) => {
-            let _ = axum::serve(l, app).await;
+        .with_state(m.clone());
+    // önceki örnek yeni kapanıyorsa port bir an dolu kalabiliyor
+    let mut last = String::new();
+    for _ in 0..10 {
+        match tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await {
+            Ok(l) => {
+                let _ = axum::serve(l, app).await;
+                return;
+            }
+            Err(e) => last = e.to_string(),
         }
-        Err(e) => eprintln!("köprü açılamadı: {e}"),
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    let msg = format!("Tarayıcı eklentisi bağlanamıyor: {PORT} numaralı port başka bir program tarafından kullanılıyor ({last}).");
+    *m.bridge_err.lock() = msg.clone();
+    m.notice(json!({"type": "bridge", "error": msg}));
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn only_trawl_extension_origin() {
+        let id = crate::native::CHROME_IDS[0];
+        assert!(super::ext_origin(&format!("chrome-extension://{id}")));
+        assert!(super::ext_origin(&format!("chrome-extension://{id}/")));
+        assert!(!super::ext_origin("chrome-extension://baskabireklentikimligi"));
+        assert!(!super::ext_origin("https://kotu.site"));
+        assert!(!super::ext_origin("extension://x"));
     }
 }

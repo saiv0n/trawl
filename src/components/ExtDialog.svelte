@@ -6,7 +6,7 @@
   let { onclose }: { onclose: () => void } = $props();
   let path = $state("");
   // eklenti her ping'de sürüm ve tarayıcı bilgisini yolluyor, 2 sn'de bir bak
-  let st = $state<{ ago: number; version: string; browser: string } | null>(null);
+  let st = $state<{ ago: number; version: string; browser: string; bridge_error?: string } | null>(null);
   const NAMES: Record<string, string> = { chrome: "Chrome", edge: "Edge", brave: "Brave", opera: "Opera", vivaldi: "Vivaldi", firefox: "Firefox" };
   const live = $derived(!!st && st.ago >= 0 && st.ago < 120);
   const ago = (s: number) => (s < 10 ? "az önce" : s < 60 ? `${s} sn önce` : `${Math.round(s / 60)} dk önce`);
@@ -31,7 +31,9 @@
   </header>
   <div class="st" class:on={live} role="status">
     <i></i>
-    {#if live && st}
+    {#if st?.bridge_error}
+      <span><b>Köprü kapalı</b> · {st.bridge_error}</span>
+    {:else if live && st}
       <span><b>Bağlı</b> · {NAMES[st.browser] || st.browser} · eklenti {st.version} · {ago(st.ago)}</span>
     {:else if st && st.ago >= 0}
       <span><b>Bağlantı yok</b> · son görülme {ago(st.ago)}. Tarayıcı açıksa eklentiyi yeniden yükleyin.</span>

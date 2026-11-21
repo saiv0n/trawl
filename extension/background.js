@@ -24,7 +24,7 @@ function adopt(j) {
 async function ping(force = false) {
   if (!force && Date.now() - alive.at < 4000) return alive.ok;
   try {
-    const r = await fetch(`${APP}/ping?v=${VERSION}&b=${BROWSER}`, { cache: "no-store" });
+    const r = await fetch(`${APP}/ping?v=${VERSION}&b=${BROWSER}`, { cache: "no-store", headers: { "X-Trawl": "1" } });
     adopt(await r.json());
   } catch {
     alive = { ...alive, ok: false, at: Date.now() };

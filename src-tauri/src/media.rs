@@ -202,9 +202,11 @@ pub async fn run(t: Arc<Task>, m: Arc<Manager>) -> Result<()> {
         .arg("-o")
         .arg(&tpl);
     add_headers(&mut c, &url, &headers);
-    let lim = m.settings.lock().speed_limit;
-    if lim > 0 {
-        c.args(["--limit-rate", &format!("{lim}K")]);
+    // yt-dlp ortak sınırı bilmiyor, çalışan medya işleri arasında paylaştır
+    let running = m.tasks.lock().iter().filter(|x| x.d.lock().kind == crate::model::Kind::Media && x.running.load(Ordering::SeqCst)).count().max(1) as u64;
+    let lim = m.settings.lock().speed_limit / running;
+    if m.settings.lock().speed_limit > 0 {
+        c.args(["--limit-rate", &format!("{}K", lim.max(1))]);
     }
     if o.mode == "audio" {
         let codec = if o.codec.is_empty() { "mp3".to_string() } else { o.codec.clone() };
@@ -239,6 +241,10 @@ pub async fn run(t: Arc<Task>, m: Arc<Manager>) -> Result<()> {
     }
     c.arg("--").arg(&url);
     let mut ch = c.spawn()?;
+    let job = ProcJob::new();
+    if let Some(j) = &job {
+        j.add(&ch);
+    }
     let out = ch.stdout.take().unwrap();
     let err = ch.stderr.take().unwrap();
     let errbuf = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
@@ -259,7 +265,13 @@ pub async fn run(t: Arc<Task>, m: Arc<Manager>) -> Result<()> {
     let mut streams = 0;
     loop {
         let l = tokio::select! {
-            _ = tok.cancelled() => { let _ = ch.kill().await; bail!(STOPPED) }
+            _ = tok.cancelled() => {
+                if let Some(j) = &job {
+                    j.kill();
+                }
+                let _ = ch.kill().await;
+                bail!(STOPPED)
+            }
             l = lines.next_line() => l?,
         };
         let Some(l) = l else { break };

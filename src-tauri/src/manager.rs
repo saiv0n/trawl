@@ -36,8 +36,15 @@ impl Limiter {
             g.0 -= n as f64;
             if g.0 < 0.0 { -g.0 / r } else { 0.0 }
         };
-        if wait > 0.0 {
-            tokio::time::sleep(Duration::from_secs_f64(wait.min(2.0))).await;
+        // borcun tamamı beklenmeli, üst sınır koyunca çok bağlantıda sınır delinir.
+        // sınır kalkarsa ya da artarsa beklemeyi kısalt
+        let end = Instant::now() + Duration::from_secs_f64(wait.min(60.0));
+        while Instant::now() < end {
+            let r2 = self.rate.load(Ordering::Relaxed) as f64;
+            if r2 <= 0.0 || r2 > r * 1.5 {
+                return;
+            }
+            tokio::time::sleep((end - Instant::now()).min(Duration::from_millis(250))).await;
         }
     }
 }
@@ -77,18 +84,39 @@ pub struct Manager {
     pub ext_seen: AtomicI64,
     /// (sürüm, tarayıcı)
     pub ext_info: Mutex<(String, String)>,
+    /// köprü portu açılamadıysa nedeni
+    pub bridge_err: Mutex<String>,
 }
 
 fn state_path() -> PathBuf {
     data_dir().join("state.json")
 }
 
+fn read_state(p: &std::path::Path) -> Option<StateFile> {
+    let mut sf: StateFile = serde_json::from_slice(&std::fs::read(p).ok()?).ok()?;
+    for t in sf.tasks.iter_mut() {
+        unseal_headers(&mut t.headers);
+    }
+    Some(sf)
+}
+
+// bozuk dosyanın üstüne boş durum yazılmasın: kenara al, yedekten aç
+fn load_state() -> StateFile {
+    let p = state_path();
+    let bak = p.with_extension("bak");
+    if let Some(sf) = read_state(&p) {
+        let _ = std::fs::copy(&p, &bak);
+        return sf;
+    }
+    if p.exists() {
+        let _ = std::fs::rename(&p, p.with_extension(format!("bozuk-{}.json", now())));
+    }
+    read_state(&bak).unwrap_or_default()
+}
+
 impl Manager {
     pub fn new(app: AppHandle) -> Arc<Self> {
-        let sf: StateFile = std::fs::read(state_path())
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let sf = load_state();
         let auto = sf.settings.auto_resume;
         let tasks = sf
             .tasks
@@ -115,6 +143,7 @@ impl Manager {
             refresh: Mutex::new(vec![]),
             ext_seen: AtomicI64::new(0),
             ext_info: Mutex::new(Default::default()),
+            bridge_err: Mutex::new(String::new()),
             settings: Mutex::new(sf.settings),
         });
         m.limiter.rate.store(m.settings.lock().speed_limit * 1024, Ordering::Relaxed);
@@ -131,6 +160,7 @@ impl Manager {
             .map(|t| {
                 let mut d = t.d.lock().clone();
                 d.done = t.get_done();
+                seal_headers(&mut d.headers);
                 d.was_active = d.status.active() || d.status == Status::Queued;
                 d
             })
@@ -138,7 +168,12 @@ impl Manager {
         let sf = StateFile { settings: self.settings.lock().clone(), tasks };
         if let Ok(b) = serde_json::to_vec(&sf) {
             let tmp = state_path().with_extension("tmp");
-            if std::fs::write(&tmp, b).is_ok() {
+            let ok = std::fs::File::create(&tmp).and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(&b)?;
+                f.sync_all()
+            });
+            if ok.is_ok() {
                 let _ = std::fs::rename(tmp, state_path());
             }
         }
@@ -267,7 +302,13 @@ impl Manager {
         if act == "none" || self.session_done.load(Ordering::Relaxed) == 0 {
             return;
         }
-        self.settings.lock().after_all = "none".into();
+        // arayüz eski değeri geri yazmasın
+        let s = {
+            let mut g = self.settings.lock();
+            g.after_all = "none".into();
+            g.clone()
+        };
+        let _ = self.app.emit("settings-changed", &s);
         self.notice(serde_json::json!({"type": "after_all", "action": act}));
         match act.as_str() {
             "shutdown" => {
@@ -480,6 +521,7 @@ impl Manager {
         }
         d.segs.clear();
         d.size = 0;
+        d.validator.clear();
         d.status = Status::Queued;
         d.error.clear();
         t.set_done(0);
@@ -520,9 +562,9 @@ impl Manager {
         if t.running.load(Ordering::SeqCst) {
             return Err("Önce duraklatın.".into());
         }
-        let (kind, size, headers) = {
+        let (kind, size, headers, validator) = {
             let d = t.d.lock();
-            (d.kind, d.size, d.headers.clone())
+            (d.kind, d.size, d.headers.clone(), d.validator.clone())
         };
         let mut final_url = url.clone();
         if kind == Kind::Http {
@@ -532,6 +574,9 @@ impl Manager {
                     "Bu bağlantı farklı bir dosyaya gidiyor (boyut {} değil {}). Doğru sayfadan kopyaladığınızdan emin olun.",
                     p.size, size
                 ));
+            }
+            if !validator.is_empty() && !p.validator.is_empty() && p.validator != validator {
+                return Err("Bu bağlantıdaki dosya indirmeye başladığınızdan farklı (sunucuda değişmiş). Baştan indirmeniz gerekiyor.".into());
             }
             final_url = p.url;
         }

@@ -370,7 +370,8 @@ pub async fn fetch_page(url: &str, h: &BTreeMap<String, String>) -> Result<(Stri
 }
 
 /// boyut/tür yoklaması, HEAD olmazsa 0-0 aralıklı GET
-pub async fn enrich(items: &mut [Item], h: &BTreeMap<String, String>) {
+/// site = çerezin ait olduğu host, başka hostlara çerez ve yetki başlığı gitmez
+pub async fn enrich(items: &mut [Item], h: &BTreeMap<String, String>, site: &str) {
     let jobs: Vec<(usize, String)> = items
         .iter()
         .enumerate()
@@ -380,7 +381,10 @@ pub async fn enrich(items: &mut [Item], h: &BTreeMap<String, String>) {
         .collect();
     let res: Vec<(usize, u64, String)> = stream::iter(jobs)
         .map(|(n, u)| {
-            let h = h.clone();
+            let mut h = h.clone();
+            if host_of(&u) != site {
+                h.retain(|k, _| !k.eq_ignore_ascii_case("cookie") && !k.eq_ignore_ascii_case("authorization"));
+            }
             async move {
                 let mut rb = client().head(&u).timeout(Duration::from_secs(8));
                 for (k, v) in &h {
@@ -493,7 +497,7 @@ pub async fn crawl<F: Fn(usize, usize) + Send + Sync>(
             progress(res.pages, all.len());
         }
     }
-    enrich(&mut all, h).await;
+    enrich(&mut all, h, &host_of(&fin)).await;
     // önce medya, sonra büyük dosyalar
     let rank: HashMap<&str, i32> = [("embed", 0), ("stream", 1), ("video", 2), ("audio", 3), ("archive", 4), ("app", 5), ("doc", 6), ("unknown", 7), ("image", 8)].into_iter().collect();
     all.sort_by(|a, b| {

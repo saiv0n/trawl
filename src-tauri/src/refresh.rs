@@ -22,6 +22,8 @@ pub struct Job {
     pub name: String,
     pub size: u64,
     #[serde(skip)]
+    pub validator: String,
+    #[serde(skip)]
     pub err: String,
     #[serde(skip)]
     pub taken: bool,
@@ -77,7 +79,7 @@ pub fn try_start(m: &Arc<Manager>, t: &Arc<Task>, msg: &str) -> bool {
         d.status = Status::Probing;
         d.stage = STAGE.into();
         d.error.clear();
-        Job { id: d.id.clone(), page: d.page.clone(), url: d.url.clone(), name: d.name.clone(), size: d.size, err: msg.to_string(), taken: false }
+        Job { id: d.id.clone(), page: d.page.clone(), url: d.url.clone(), name: d.name.clone(), size: d.size, validator: d.validator.clone(), err: msg.to_string(), taken: false }
     };
     let id = job.id.clone();
     {
@@ -143,7 +145,8 @@ pub async fn pick(cands: Vec<Cand>, job: &Job, headers: &BTreeMap<String, String
             }
         }
         let Ok(Ok(p)) = tokio::time::timeout(Duration::from_secs(15), crate::http::probe(&c.url, &h)).await else { continue };
-        if p.size == job.size {
+        let same = job.validator.is_empty() || p.validator.is_empty() || p.validator == job.validator;
+        if p.size == job.size && same {
             return Some((p.url, h));
         }
     }
@@ -199,7 +202,7 @@ mod tests {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", l.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(l, Router::new().route("/v/film.mp4", get(file)).route("/x/film.mp4", get(file))).await.unwrap() });
-        let job = Job { id: "1".into(), page: format!("{base}/page"), url: format!("{base}/v/film.mp4?sig=old"), name: "film.mp4".into(), size: 1000, err: String::new(), taken: true };
+        let job = Job { id: "1".into(), page: format!("{base}/page"), url: format!("{base}/v/film.mp4?sig=old"), name: "film.mp4".into(), size: 1000, validator: String::new(), err: String::new(), taken: true };
         let c = |u: String, ck: bool| Cand { url: u, headers: if ck { [("Cookie".to_string(), "s=1".to_string())].into() } else { Default::default() } };
         let cands = vec![
             c(format!("{base}/v/film.mp4?sig=old"), true),

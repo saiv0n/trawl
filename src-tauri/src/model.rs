@@ -89,6 +89,8 @@ pub struct TaskData {
     pub was_active: bool,
     /// otomatik tazeleme denendi mi, döngüye girmesin
     pub refresh_tries: u32,
+    /// kaldığı yerden sürerken dosya değişti mi diye If-Range'e giden doğrulayıcı
+    pub validator: String,
 }
 
 impl Default for TaskData {
@@ -118,6 +120,7 @@ impl Default for TaskData {
             stage: String::new(),
             was_active: false,
             refresh_tries: 0,
+            validator: String::new(),
         }
     }
 }

@@ -259,7 +259,7 @@ fn cancel_shutdown() {
 fn ext_status(m: M) -> Value {
     let seen = m.ext_seen.load(std::sync::atomic::Ordering::Relaxed);
     let (version, browser) = m.ext_info.lock().clone();
-    json!({"ago": if seen > 0 { model::now() - seen } else { -1 }, "version": version, "browser": browser, "id": native::CHROME_IDS[0]})
+    json!({"ago": if seen > 0 { model::now() - seen } else { -1 }, "version": version, "browser": browser, "id": native::CHROME_IDS[0], "bridge_error": *m.bridge_err.lock()})
 }
 
 #[tauri::command]
@@ -295,6 +295,7 @@ fn close_window(app: AppHandle, m: M) {
             f
         };
         if first {
+            let _ = app.emit("settings-changed", &*m.settings.lock());
             m.save();
             m.os_notify("Trawl arka planda çalışıyor", "İndirmeler sürüyor. Simgeye tıklayınca pencere açılır; kapatmak için sağ tık › Çıkış.");
         }

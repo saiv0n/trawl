@@ -73,7 +73,7 @@ pub async fn handle(origin: &str, msg: &Value) -> Value {
         }
     }
     let u = format!("http://127.0.0.1:{}{path}", crate::bridge::PORT);
-    let rb = if path == "/ping" { c.get(u) } else { c.post(u).json(&msg["body"]) };
+    let rb = if path == "/ping" { c.get(u).header("X-Trawl", "1") } else { c.post(u).json(&msg["body"]) };
     match rb.header("Origin", origin).send().await {
         Ok(r) => {
             let st = r.status().as_u16();

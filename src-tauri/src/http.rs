@@ -53,6 +53,8 @@ pub struct Probe {
     pub resumable: bool,
     pub name: String,
     pub ctype: String,
+    /// güçlü ETag, yoksa Last-Modified
+    pub validator: String,
 }
 
 /// :body varsa aynı gövdeyle POST at
@@ -105,6 +107,8 @@ pub async fn probe(url: &str, h: &BTreeMap<String, String>) -> Result<Probe> {
     } else if let Ok(n) = get("content-length").parse::<u64>() {
         size = n;
     }
+    let etag = get("etag");
+    let validator = if !etag.is_empty() && !etag.starts_with("W/") { etag } else { get("last-modified") };
     let ctype = get("content-type").split(';').next().unwrap_or("").trim().to_lowercase();
     let cd = get("content-disposition");
     let mut name = String::new();
@@ -125,7 +129,7 @@ pub async fn probe(url: &str, h: &BTreeMap<String, String>) -> Result<Probe> {
             name = format!("{}.{e}", if name.is_empty() { "dosya" } else { &name });
         }
     }
-    Ok(Probe { url: final_url, size, resumable, name: safe_name(&name), ctype })
+    Ok(Probe { url: final_url, size, resumable, name: safe_name(&name), ctype, validator })
 }
 
 pub fn mime_ext(m: &str) -> &'static str {
@@ -178,6 +182,7 @@ pub async fn run_with(t: Arc<Task>, lim: Arc<Limiter>, conns: u32) -> Result<()>
         d.url = p.url;
         d.size = p.size;
         d.resumable = p.resumable;
+        d.validator = p.validator;
         if d.name.is_empty() {
             d.name = p.name;
         }
@@ -241,22 +246,30 @@ async fn single(t: &Arc<Task>, lim: &Arc<Limiter>, part: &PathBuf) -> Result<()>
     t.conns.store(1, Ordering::Relaxed);
     let tok = t.token();
     let r = rq(&url, &h).send().await?.error_for_status()?;
+    let expect = match t.d.lock().size {
+        0 => r.content_length().unwrap_or(0),
+        n => n,
+    };
     let f = std::fs::File::create(part)?;
     let mut off = 0u64;
     let mut st = r.bytes_stream();
     loop {
         let c = tokio::select! {
             _ = tok.cancelled() => break,
-            c = st.next() => c,
+            c = tokio::time::timeout(Duration::from_secs(60), st.next()) => c,
         };
+        let Ok(c) = c else { bail!("Sunucu yanıt vermiyor (zaman aşımı)") };
         let Some(c) = c else { break };
         let c = c?;
         f.seek_write(&c, off)?;
         off += c.len() as u64;
         t.add_done(c.len() as u64);
-        lim.take(c.len() as u64).await;
+        tokio::select! { _ = tok.cancelled() => {}, _ = lim.take(c.len() as u64) => {} }
     }
     t.conns.store(0, Ordering::Relaxed);
+    if !tok.is_cancelled() && expect > 0 && off < expect {
+        bail!("İndirme eksik kaldı, sunucu bağlantıyı erken kesti");
+    }
     let mut d = t.d.lock();
     if d.size == 0 {
         d.size = off;
@@ -388,9 +401,9 @@ fn flush(t: &Task, f: &std::fs::File, i: usize, buf: &mut Vec<u8>) -> Result<(bo
 
 async fn fetch(t: &Arc<Task>, lim: &Arc<Limiter>, f: &std::fs::File, i: usize) -> Result<()> {
     let tok = t.token();
-    let (url, h) = {
+    let (url, h, validator) = {
         let d = t.d.lock();
-        (d.url.clone(), d.headers.clone())
+        (d.url.clone(), d.headers.clone(), d.validator.clone())
     };
     let mut tries = 0u32;
     let mut buf: Vec<u8> = Vec::with_capacity(FLUSH + 65536);
@@ -403,11 +416,17 @@ async fn fetch(t: &Arc<Task>, lim: &Arc<Limiter>, f: &std::fs::File, i: usize) -
             return Ok(());
         }
         let res: Result<bool> = async {
-            let r = rq(&url, &h)
-                .header("Range", format!("bytes={start}-{end}"))
-                .send()
-                .await?;
+            let mut rb = rq(&url, &h).header("Range", format!("bytes={start}-{end}"));
+            if !validator.is_empty() {
+                rb = rb.header("If-Range", validator.as_str());
+            }
+            let r = rb.send().await?;
             let code = r.status().as_u16();
+            // If-Range tutmazsa sunucu bütün dosyayı 200 ile yollar, eski parçalarla karışmasın
+            let echoed = ["etag", "last-modified"].iter().any(|k| r.headers().get(*k).and_then(|v| v.to_str().ok()) == Some(validator.as_str()));
+            if code == 200 && !validator.is_empty() && !echoed {
+                return Err(anyhow!("FATAL:Sunucudaki dosya değişmiş. Baştan indir ile yeniden başlatın"));
+            }
             if code == 200 && start != 0 {
                 return Err(anyhow!("FATAL:Sunucu parçalı indirmeyi reddetti"));
             }
@@ -457,7 +476,7 @@ async fn fetch(t: &Arc<Task>, lim: &Arc<Limiter>, f: &std::fs::File, i: usize) -
                         return Ok(true);
                     }
                 }
-                lim.take(n).await;
+                tokio::select! { _ = tok.cancelled() => {}, _ = lim.take(n) => {} }
                 tries = 0;
             }
         }
