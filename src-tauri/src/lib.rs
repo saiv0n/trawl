@@ -253,6 +253,14 @@ async fn tools_install(app: AppHandle, which: String) -> R<()> {
 }
 
 #[tauri::command]
+async fn verify_hash(m: M<'_>, id: String, expected: String) -> R<Value> {
+    let (path, _) = m.path_of(&id).ok_or("İndirme bulunamadı")?;
+    let want = expected.trim().to_lowercase();
+    let (algo, got) = tokio::task::spawn_blocking(move || hash_file(&path, &want)).await.map_err(e)??;
+    Ok(json!({"ok": got == expected.trim().to_lowercase(), "algo": algo, "got": got}))
+}
+
+#[tauri::command]
 fn cancel_shutdown() {
     let _ = std::process::Command::new("shutdown").arg("/a").creation_flags(NO_WINDOW).spawn();
 }
@@ -413,6 +421,7 @@ pub fn run() {
             app.manage(m.clone());
             tauri::async_runtime::spawn(bridge::serve(m.clone()));
             clipboard_watch(m.clone());
+            tauri::async_runtime::spawn(tools::auto_update(m.clone()));
 
             let show = MenuItem::with_id(app, "show", "Trawl'ı aç", true, None::<&str>)?;
             let pa = MenuItem::with_id(app, "pause_all", "Hepsini duraklat", true, None::<&str>)?;
@@ -467,7 +476,7 @@ pub fn run() {
             snapshot, get_settings, set_settings, analyze, scrape_page, add, add_many, pause, resume, start_now,
             restart, remove, move_task, update_url, free_space, pause_all, resume_all, clear_done, open_task, reveal_task, open_folder,
             read_clipboard, write_clipboard, tools_status, tools_install, cancel_shutdown, ext_folder, ext_status, ui_ready,
-            close_window, quit_app
+            close_window, quit_app, verify_hash
         ])
         .run(tauri::generate_context!())
         .expect("Trawl başlatılamadı");

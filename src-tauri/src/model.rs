@@ -361,6 +361,15 @@ pub struct Settings {
     pub clipboard_asked: bool,
     pub tray_told: bool,
     pub autostart: bool,
+    /// günde bir yt-dlp sürümüne bakıp kendiliğinden günceller
+    pub tools_auto_update: bool,
+    pub tools_checked: i64,
+    /// her gün start'ta sıradakileri başlatır, stop'ta duraklatır (SS:DD)
+    pub schedule: bool,
+    pub schedule_start: String,
+    pub schedule_stop: String,
+    /// http://, https:// ya da socks5://, boşsa sistem ayarı
+    pub proxy: String,
 }
 
 pub const DEFAULT_EXTS: &str = "zip rar 7z tar gz tgz bz2 xz zst cab iso img bin exe msi msix appx apk xapk dmg pkg deb rpm appimage jar mp4 mkv avi mov wmv flv webm m4v mpg mpeg 3gp ts mp3 m4a aac flac wav ogg opus wma pdf epub mobi djvu doc docx xls xlsx ppt pptx odt ods odp psd ai torrent";
@@ -397,6 +406,12 @@ impl Default for Settings {
             tray_told: false,
             motion: true,
             autostart: false,
+            tools_auto_update: true,
+            tools_checked: 0,
+            schedule: false,
+            schedule_start: "02:00".into(),
+            schedule_stop: "08:00".into(),
+            proxy: String::new(),
         }
     }
 }

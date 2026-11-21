@@ -17,6 +17,7 @@ export interface Settings {
   tray: boolean; sound: boolean; notify: boolean; after_all: string; auto_resume: boolean; default_height: number;
   default_container: string; default_codec: string; default_bitrate: number; intercept: boolean; min_intercept_kb: number; intercept_exts: string; intercept_skip: string[]; intercept_ask_mb: number;
   accent: string; theme: string; motion: boolean; motion_mode: string; density: string; clipboard_asked: boolean; tray_told: boolean; autostart: boolean;
+  tools_auto_update: boolean; tools_checked: number; schedule: boolean; schedule_start: string; schedule_stop: string; proxy: string;
 }
 
 export async function call<T = any>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -46,7 +47,7 @@ const demo: Task[] = [
   mk({ name: "ubuntu-24.04.1-desktop-amd64.iso", category: "arsiv", size: 6_114_656_256, done: 2_400_000_000, speed: 62_000_000, eta: 60, conns: 16, segs: segs(16, 0.4) }),
   mk({ kind: "media", name: "Lo-fi Beats to Code To.mp3", category: "muzik", size: 92_000_000, done: 92_000_000, status: "processing", stage: "Kapak ekleniyor", thumb: "https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg", quality: "MP3 320k", mode: "audio" }),
   mk({ name: "Blender-4.3-windows-x64.msi", category: "program", size: 380_000_000, done: 150_000_000, status: "paused", segs: segs(8, 0.39) }),
-  mk({ name: "Annual-Report-2026.pdf", category: "belge", size: 14_200_000, done: 14_200_000, status: "done", finished: now - 300 }),
+  mk({ name: "Annual-Report-2026.pdf", category: "belge", size: 14_200_000, done: 14_200_000, status: "done", finished: now - 300, path: "C:/Users/me/Downloads/Trawl/Annual-Report-2026.pdf" }),
   mk({ name: "dataset-images.zip", category: "arsiv", size: 0, done: 0, status: "error", error: "Bağlantının süresi dolmuş olabilir (403)" }),
   mk({ name: "wallpaper-aurora-8k.png", category: "resim", size: 48_000_000, done: 0, status: "queued" }),
 ];
@@ -64,7 +65,7 @@ function mock(cmd: string, args?: any): any {
       if (new URLSearchParams(location.search).has("empty")) return { tasks: [], speed: 0, history: hist.map(() => 0), session: 0, eta_total: -1 };
       return { tasks: demo.concat(bulk), speed: hist[hist.length - 1], history: hist, session: 12_400_000_000, eta_total: 74 };
     case "get_settings":
-      return { folder: "C:\\Users\\me\\Downloads\\Trawl", connections: 8, concurrent: 3, speed_limit: 0, categorize: true, clipboard: true, tray: true, sound: true, notify: true, after_all: "none", auto_resume: true, default_height: 1080, default_container: "mp4", default_codec: "mp3", default_bitrate: 320, intercept: true, min_intercept_kb: 512, intercept_exts: "zip rar 7z exe msi iso mp4 mkv mp3 pdf", intercept_skip: ["drive.google.com"], intercept_ask_mb: 50, accent: "cobalt", theme: new URLSearchParams(location.search).get("theme") || "light", motion: true, motion_mode: "system", density: "default", clipboard_asked: false, tray_told: false, autostart: false };
+      return { folder: "C:\\Users\\me\\Downloads\\Trawl", connections: 8, concurrent: 3, speed_limit: 0, categorize: true, clipboard: true, tray: true, sound: true, notify: true, after_all: "none", auto_resume: true, default_height: 1080, default_container: "mp4", default_codec: "mp3", default_bitrate: 320, intercept: true, min_intercept_kb: 512, intercept_exts: "zip rar 7z exe msi iso mp4 mkv mp3 pdf", intercept_skip: ["drive.google.com"], intercept_ask_mb: 50, accent: "cobalt", theme: new URLSearchParams(location.search).get("theme") || "light", motion: true, motion_mode: "system", density: "default", clipboard_asked: false, tray_told: false, autostart: false, tools_auto_update: true, tools_checked: 0, schedule: false, schedule_start: "02:00", schedule_stop: "08:00", proxy: "" };
     case "tools_status":
       return { ytdlp: "C:\\bin\\yt-dlp.exe", ytdlp_version: "2026.10.26", ffmpeg: "C:\\bin\\ffmpeg.exe" };
     case "analyze":
@@ -89,6 +90,11 @@ function mock(cmd: string, args?: any): any {
       return 214_000_000_000;
     case "update_url":
       return new Promise((res) => setTimeout(res, 600));
+    case "verify_hash": {
+      const n = args.expected.trim().length;
+      if (![32, 40, 64].includes(n)) return Promise.reject("MD5, SHA-1 ya da SHA-256 değeri yapıştırın");
+      return new Promise((res) => setTimeout(() => res({ ok: !args.expected.startsWith("0"), algo: n === 32 ? "MD5" : n === 40 ? "SHA-1" : "SHA-256", got: "" }), 500));
+    }
     default:
       return null;
   }

@@ -27,6 +27,10 @@ fn base_cmd() -> Result<Command> {
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .args(["--no-colors", "--encoding", "utf-8"]);
+    let p = proxy();
+    if !p.is_empty() {
+        c.arg("--proxy").arg(p);
+    }
     if let Some(ff) = find_tool("ffmpeg") {
         c.arg("--ffmpeg-location").arg(ff);
     }

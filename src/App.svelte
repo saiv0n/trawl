@@ -155,6 +155,13 @@
       case "grab":
         store.modal = { type: "grab", data: n.data };
         break;
+      case "schedule":
+        toasts.push({ kind: "info", title: n.start ? "Zamanlayıcı indirmeleri başlattı" : "Zamanlayıcı indirmeleri duraklattı", ttl: 8000 });
+        break;
+      case "tools_updated":
+        toasts.push({ kind: "ok", title: `yt-dlp ${n.version} sürümüne güncellendi`, ttl: 6000 });
+        call("tools_status").then((x: any) => (store.tools = x)).catch(() => {});
+        break;
       case "bridge":
         toasts.push({ kind: "warn", title: "Eklenti köprüsü açılamadı", body: n.error, ttl: 20000 });
         break;

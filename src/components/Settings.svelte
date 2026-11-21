@@ -24,7 +24,7 @@
     medya: "video kalite kapsayıcı mp4 mkv ses biçim mp3 bit hızı",
     gorunum: "tema açık koyu sistem vurgu renk hareket animasyon yoğunluk satır",
     tarayici: "eklenti chrome devral alt sınır sor tür uzantı site alt tık",
-    bilesen: "yt-dlp ffmpeg deno bileşen kur güncelle",
+    bilesen: "yt-dlp ffmpeg deno bileşen kur güncelle otomatik",
     hakkinda: "sürüm lisans",
   };
   const shown = $derived(q.trim() ? TABS.filter(([k, l]) => `${l} ${KEYS[k]}`.toLocaleLowerCase("tr").includes(q.trim().toLocaleLowerCase("tr"))) : TABS);
@@ -129,6 +129,26 @@
             <small>Toplam hıza uygulanır, anında geçerli olur.</small>
           </div>
         </div>
+        <div class="group">
+          {@render sw("Zamanlayıcı", "Her gün belirlenen saatte sıradakileri başlatır, bitiş saatinde duraklatır", "schedule")}
+          {#if s.schedule}
+            <div class="line">
+              <div><b>Saatler</b><small>Bilgisayar açık ve Trawl çalışıyor olmalı</small></div>
+              <div class="rowb">
+                <input class="field num" type="time" value={s.schedule_start} onchange={(e) => set({ schedule_start: e.currentTarget.value })} aria-label="Başlangıç saati" />
+                <span class="dim">ile</span>
+                <input class="field num" type="time" value={s.schedule_stop} onchange={(e) => set({ schedule_stop: e.currentTarget.value })} aria-label="Bitiş saati" />
+              </div>
+            </div>
+          {/if}
+        </div>
+        <div class="group">
+          <div class="line col">
+            <div class="lh"><b>Proxy</b></div>
+            <input class="field mono" spellcheck="false" placeholder="Boşsa sistem ayarı. Örnek: socks5://127.0.0.1:1080" value={s.proxy} onchange={(e) => set({ proxy: e.currentTarget.value.trim() })} aria-label="Proxy" />
+            <small>http, https ve socks5 desteklenir. Video indirmeleri de bunu kullanır.</small>
+          </div>
+        </div>
       {:else if cur === "medya"}
         <div class="group">
           <div class="line"><div><b>Video kalitesi</b><small>Yoksa bir alttaki seçilir</small></div>
@@ -197,6 +217,9 @@
             </div>
           {/each}
         </div>
+        <div class="group">
+          {@render sw("yt-dlp'yi kendiliğinden güncelle", "Günde bir kez bakar, siteler değişince indirmeler bozulmasın. Yalnızca Trawl'ın kurduğu kopyayı günceller", "tools_auto_update")}
+        </div>
         <button class="btn btn-primary" disabled={!!busy} onclick={() => install("all")}>{#if busy === "all"}<span class="spinner"></span>{/if}Hepsini kur ya da güncelle</button>
       {:else}
         <div class="about">
@@ -259,6 +282,10 @@
   dt { color: var(--text-3); }
   .exts { width: 100%; resize: vertical; padding: 8px 10px; border-radius: var(--r-2); border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 12px; line-height: 1.5; outline: none; }
   .exts:focus { border-color: var(--accent); }
+  .field { height: 30px; padding: 0 10px; border-radius: var(--r-2); border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 12.5px; outline: none; }
+  .line.col .field { width: 100%; }
+  .field:focus { border-color: var(--accent); }
+  .dim { color: var(--text-3); font-size: 12px; }
   .link { color: var(--accent-text); font-size: 12px; font-weight: 500; }
   .link:hover { text-decoration: underline; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }

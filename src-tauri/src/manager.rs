@@ -154,6 +154,7 @@ impl Manager {
             settings: Mutex::new(sf.settings),
         });
         m.limiter.rate.store(m.settings.lock().speed_limit * 1024, Ordering::Relaxed);
+        set_proxy(&m.settings.lock().proxy);
         let mm = m.clone();
         tauri::async_runtime::spawn(async move { mm.run_loop().await });
         m
@@ -237,6 +238,7 @@ impl Manager {
         let mut prev = Instant::now();
         let mut last_save = Instant::now();
         let mut ticks = 0u64;
+        let mut minute = String::new();
         loop {
             iv.tick().await;
             let dt = prev.elapsed().as_secs_f64().max(0.001);
@@ -303,11 +305,34 @@ impl Manager {
                 self.all_done();
             }
             ticks += 1;
+            let hm = chrono::Local::now().format("%H:%M").to_string();
+            if hm != minute {
+                minute = hm;
+                self.schedule_tick(&minute);
+            }
             let _ = self.app.emit("tick", self.tick_snapshot(ticks.is_multiple_of(8)));
             if last_save.elapsed() > Duration::from_secs(3) {
                 last_save = Instant::now();
                 self.save();
             }
+        }
+    }
+
+    /// zamanlayıcı: başlangıç dakikasında sıradakileri başlat, bitişte duraklat
+    fn schedule_tick(&self, hm: &str) {
+        let (on, start, stop) = {
+            let s = self.settings.lock();
+            (s.schedule, s.schedule_start.clone(), s.schedule_stop.clone())
+        };
+        if !on {
+            return;
+        }
+        if hm == start {
+            self.resume_all();
+            self.notice(serde_json::json!({"type": "schedule", "start": true}));
+        } else if hm == stop {
+            self.pause_all();
+            self.notice(serde_json::json!({"type": "schedule", "start": false}));
         }
     }
 
@@ -665,6 +690,7 @@ impl Manager {
     }
 
     pub fn set_settings(&self, s: Settings) {
+        set_proxy(&s.proxy);
         self.limiter.rate.store(s.speed_limit * 1024, Ordering::Relaxed);
         *self.settings.lock() = s;
         self.save();

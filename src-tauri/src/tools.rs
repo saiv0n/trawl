@@ -88,11 +88,49 @@ async fn fetch(app: &AppHandle, name: &str, url: &str) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
+async fn install_ytdlp(app: &AppHandle) -> Result<()> {
+    let b = fetch_checked(app, "yt-dlp", YTDLP, YTDLP_SUM).await?;
+    replace(&bin_dir(), "yt-dlp.exe", &mut b.as_slice())
+}
+
+/// son sürümün etiketi, api sınırına takılmamak için yönlendirmeden okunuyor
+async fn latest_ytdlp() -> Option<String> {
+    let r = client().get("https://github.com/yt-dlp/yt-dlp/releases/latest").timeout(std::time::Duration::from_secs(20)).send().await.ok()?;
+    let u = r.url().to_string();
+    u.contains("/tag/").then(|| u.rsplit('/').next().unwrap_or("").to_string())
+}
+
+/// sitelerin çoğu yt-dlp eskiyince bozuluyor; günde bir bak, kendi kurduğumuz kopyayı güncelle
+pub async fn auto_update(m: std::sync::Arc<crate::manager::Manager>) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+        let (on, last) = {
+            let s = m.settings.lock();
+            (s.tools_auto_update, s.tools_checked)
+        };
+        let media_busy = m.tasks.lock().iter().any(|t| t.d.lock().kind == crate::model::Kind::Media && t.running.load(std::sync::atomic::Ordering::SeqCst));
+        let ours = find_tool("yt-dlp").map(|p| p.starts_with(bin_dir())).unwrap_or(false);
+        if on && ours && !media_busy && crate::model::now() - last > 86_400 {
+            let local = status().await.ytdlp_version;
+            if let Some(v) = latest_ytdlp().await {
+                let ok = v == local || install_ytdlp(&m.app).await.is_ok();
+                if ok {
+                    m.settings.lock().tools_checked = crate::model::now();
+                    m.save();
+                    if v != local {
+                        m.notice(serde_json::json!({"type": "tools_updated", "version": v}));
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+    }
+}
+
 pub async fn install(app: AppHandle, which: String) -> Result<()> {
     let dir = bin_dir();
     if which == "ytdlp" || which == "all" {
-        let b = fetch_checked(&app, "yt-dlp", YTDLP, YTDLP_SUM).await?;
-        replace(&dir, "yt-dlp.exe", &mut b.as_slice())?;
+        install_ytdlp(&app).await?;
     }
     if which == "deno" || which == "ytdlp" || which == "all" {
         let b = fetch_checked(&app, "deno", DENO, DENO_SUM).await?;

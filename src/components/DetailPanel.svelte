@@ -9,6 +9,19 @@
   const active = $derived(!!t && ACTIVE.has(t.status));
   const pct = $derived(t?.size ? Math.min(1, t.done / t.size) : 0);
   let imgOk = $state(true);
+  let sum = $state("");
+  let sumRes = $state<{ ok: boolean; algo: string; got: string } | null>(null);
+  let sumBusy = $state(false);
+  // t her tıkta yeni nesne, yalnızca başka indirme seçilince sıfırla
+  const tid = $derived(t?.id);
+  $effect(() => { tid; sum = ""; sumRes = null; });
+  async function verify() {
+    if (!t || !sum.trim()) return;
+    sumBusy = true; sumRes = null;
+    try { sumRes = await call("verify_hash", { id: t.id, expected: sum }); }
+    catch (x) { toasts.push({ kind: "error", title: "Doğrulanamadı", body: String(x) }); }
+    sumBusy = false;
+  }
 
   function copy(s: string) {
     call("write_clipboard", { text: s });
@@ -78,6 +91,16 @@
       </div>
     </div>
 
+    {#if t.status === "done" && t.path}
+      <div class="sum">
+        <b>Sağlama</b>
+        <div class="row">
+          <input class="mono" spellcheck="false" placeholder="MD5, SHA-1 ya da SHA-256 yapıştırın" bind:value={sum} onkeydown={(e) => e.key === "Enter" && verify()} aria-label="Beklenen sağlama değeri" />
+          <button class="btn btn-sm" disabled={sumBusy || !sum.trim()} onclick={verify}>{#if sumBusy}<span class="spinner"></span>{/if}Doğrula</button>
+        </div>
+        {#if sumRes}<p class="res" class:bad={!sumRes.ok}>{sumRes.ok ? `${sumRes.algo} tutuyor, dosya sağlam` : `${sumRes.algo} tutmuyor. Dosya bozuk ya da değiştirilmiş olabilir`}</p>{/if}
+      </div>
+    {/if}
     <div class="acts">
       {#if t.status === "done"}
         <button class="btn btn-primary" onclick={open}><Icon n="external" size={14} />Aç</button>
@@ -99,6 +122,13 @@
 </section>
 
 <style>
+  .sum { padding: 12px 16px; border-top: 1px solid var(--border); display: grid; gap: 6px; }
+  .sum b { font-size: 12px; color: var(--text-2); font-weight: 500; }
+  .sum .row { display: flex; gap: 6px; }
+  .sum input { flex: 1; min-width: 0; height: 28px; padding: 0 8px; border-radius: var(--r-2); border: 1px solid var(--border); background: var(--bg); font-size: 11.5px; outline: none; }
+  .sum input:focus { border-color: var(--accent); }
+  .res { font-size: 12px; color: var(--ok); }
+  .res.bad { color: var(--error); }
   .panel { width: 340px; flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border-subtle); background: var(--bg); }
   .none { margin: auto; text-align: center; padding: 24px; color: var(--text-3); }
   .none b { display: block; color: var(--text-2); font-weight: 500; margin-bottom: 4px; }

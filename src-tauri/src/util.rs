@@ -139,18 +139,77 @@ pub fn unique_path(p: &Path) -> PathBuf {
     unreachable!()
 }
 
-pub fn client() -> &'static reqwest::Client {
-    static C: OnceLock<reqwest::Client> = OnceLock::new();
-    C.get_or_init(|| {
-        reqwest::Client::builder()
-            .user_agent(UA)
-            .connect_timeout(std::time::Duration::from_secs(15))
-            .pool_max_idle_per_host(64)
-            .tcp_nodelay(true)
-            .http1_only()
-            .build()
-            .expect("http istemcisi")
-    })
+fn proxy_cell() -> &'static parking_lot::RwLock<String> {
+    static P: OnceLock<parking_lot::RwLock<String>> = OnceLock::new();
+    P.get_or_init(Default::default)
+}
+
+pub fn set_proxy(p: &str) {
+    *proxy_cell().write() = p.trim().to_string();
+}
+
+pub fn proxy() -> String {
+    proxy_cell().read().clone()
+}
+
+/// proxy değişince yeniden kurulur, Client ucuz kopyalanıyor
+pub fn client() -> reqwest::Client {
+    static C: OnceLock<parking_lot::Mutex<Option<(String, reqwest::Client)>>> = OnceLock::new();
+    let p = proxy();
+    let mut g = C.get_or_init(Default::default).lock();
+    if let Some((k, c)) = g.as_ref() {
+        if *k == p {
+            return c.clone();
+        }
+    }
+    let c = build_client(&p);
+    *g = Some((p, c.clone()));
+    c
+}
+
+fn build_client(p: &str) -> reqwest::Client {
+    let mut b = reqwest::Client::builder();
+    if !p.is_empty() {
+        if let Ok(x) = reqwest::Proxy::all(p) {
+            b = b.proxy(x);
+        }
+    }
+    b.user_agent(UA)
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .pool_max_idle_per_host(64)
+        .tcp_nodelay(true)
+        .http1_only()
+        .build()
+        .expect("http istemcisi")
+}
+
+/// uzunluğa göre md5, sha1 ya da sha256; dosyayı parça parça okur
+pub fn hash_file(path: &str, expected: &str) -> Result<(String, String), String> {
+    use sha2::Digest;
+    use std::io::Read;
+    let want = expected.trim().to_lowercase();
+    let mut f = std::fs::File::open(path).map_err(|_| "Dosya bulunamadı".to_string())?;
+    let mut buf = vec![0u8; 1 << 20];
+    macro_rules! run {
+        ($h:expr, $name:expr) => {{
+            let mut h = $h;
+            loop {
+                let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+                if n == 0 {
+                    break;
+                }
+                h.update(&buf[..n]);
+            }
+            let got: String = h.finalize().iter().map(|x| format!("{x:02x}")).collect();
+            Ok(($name.to_string(), got))
+        }};
+    }
+    match want.len() {
+        32 => run!(md5::Md5::new(), "MD5"),
+        40 => run!(sha1::Sha1::new(), "SHA-1"),
+        64 => run!(sha2::Sha256::new(), "SHA-256"),
+        _ => Err("MD5, SHA-1 ya da SHA-256 değeri yapıştırın".into()),
+    }
 }
 
 pub fn data_dir() -> PathBuf {
@@ -376,5 +435,20 @@ mod job_tests {
         assert!(t.elapsed().as_secs() < 3);
         let out = std::process::Command::new("tasklist").args(["/fi", &format!("PID eq {}", ch.id().unwrap_or(0))]).output().unwrap();
         assert!(!String::from_utf8_lossy(&out.stdout).contains("cmd.exe"));
+    }
+}
+
+#[cfg(test)]
+mod hash_tests {
+    #[test]
+    fn picks_algo_by_length() {
+        let p = std::env::temp_dir().join(format!("trawl-hash-{}", std::process::id()));
+        std::fs::write(&p, b"abc").unwrap();
+        let p = p.to_string_lossy().to_string();
+        assert_eq!(super::hash_file(&p, "900150983CD24FB0D6963F7D28E17F72").unwrap().1, "900150983cd24fb0d6963f7d28e17f72");
+        assert_eq!(super::hash_file(&p, &"0".repeat(64)).unwrap().1, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(super::hash_file(&p, "a9993e364706816aba3e25717850c26c9cd0d89d").unwrap().0, "SHA-1");
+        assert!(super::hash_file(&p, "kısa").is_err());
+        let _ = std::fs::remove_file(&p);
     }
 }

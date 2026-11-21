@@ -8,6 +8,7 @@ Neler var:
 - yt-dlp ile YouTube, TikTok, Instagram, X, Twitch ve yt-dlp'nin desteklediği diğer siteler (kalite seçimi, MP4/MKV/WEBM, MP3/M4A/OPUS/FLAC/WAV, altyazı ve bölüm gömme, SponsorBlock, oynatma listeleri)
 - sayfa tarayıcı: video/audio etiketleri, linkler, srcset, og/twitter meta, JSON-LD, iframe'ler, script içine gömülü m3u8/mp4 adresleri. boyutları yokluyor, aynı sitede 1-2 seviye derine inebiliyor
 - kuyruk, aynı anda indirme sınırı, genel hız sınırı, hepsi bitince uyku/kapat/çık
+- zamanlayıcı, proxy (http, socks5), biten dosyada MD5/SHA-1/SHA-256 kontrolü, yt-dlp günde bir kendini güncelliyor
 - sistem tepsisi, pano izleme, sürükle bırak, bildirimler, Windows ile başlama, tek örnek
 - tarayıcı eklentisi (`extension/`): ağdaki medyayı yakalıyor (HLS/DASH dahil), Chrome indirmelerini devralıyor, sağ tık menüsü, YouTube'da İndir düğmesi (Shift ile direkt video, Alt ile direkt ses)
 
