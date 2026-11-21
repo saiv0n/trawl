@@ -357,10 +357,27 @@ pub fn cleanup(folder: &str, title: &str) {
         return;
     }
     let Ok(rd) = std::fs::read_dir(folder) else { return };
-    let key: String = safe_name(title).chars().take(40).collect();
+    // yt-dlp --windows-filenames yasak karakterleri tam genişlik karşılıklarıyla değiştiriyor
+    let yt: String = title
+        .chars()
+        .map(|c| match c {
+            ':' => '：',
+            '?' => '？',
+            '"' => '＂',
+            '*' => '＊',
+            '/' => '⧸',
+            '\\' => '⧹',
+            '|' => '｜',
+            '<' => '＜',
+            '>' => '＞',
+            c => c,
+        })
+        .collect();
+    let key: String = yt.trim().chars().take(40).collect();
+    let key2: String = safe_name(title).chars().take(40).collect();
     for e in rd.flatten() {
         let n = e.file_name().to_string_lossy().to_string();
-        if n.starts_with(&key) && (n.ends_with(".part") || n.contains(".part-Frag") || n.ends_with(".ytdl")) {
+        if (n.starts_with(&key) || n.starts_with(&key2)) && (n.ends_with(".part") || n.contains(".part-Frag") || n.ends_with(".ytdl")) {
             let _ = std::fs::remove_file(e.path());
         }
     }

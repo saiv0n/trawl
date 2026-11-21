@@ -38,7 +38,14 @@ class Store {
 
   /** her tıkta gelen anlık görüntü. yeni id'ler işaretlenir, toplu eklemede (>5) animasyon yok */
   ingest(s: Snapshot) {
+    if (s.ids) {
+      // ids varsa yalnızca değişen satırlar geldi
+      const m = new Map(this.snap.tasks.map((t) => [t.id, t]));
+      for (const t of s.tasks) m.set(t.id, t);
+      s = { ...s, tasks: s.ids.map((id) => m.get(id)).filter((t): t is Task => !!t) };
+    }
     const seen = this.#seen;
+    if (!seen) flushPending();
     if (seen) {
       const added = s.tasks.filter((t) => !seen.has(t.id)).map((t) => t.id);
       if (added.length && added.length <= 5 && !reducedMotion()) {
@@ -110,10 +117,15 @@ class Store {
     const sel = new Set(this.selected);
     ids.forEach((i) => sel.delete(i));
     this.selected = sel;
+    // gizliyken inmeye devam etmesin, geri alınırsa sürer
+    const running = ids.filter((id) => { const t = this.snap.tasks.find((x) => x.id === id); return !!t && (ACTIVE.has(t.status) || t.status === "queued"); });
+    running.forEach((id) => call("pause", { id }));
+    pending(ids, true);
     let undone = false;
     const timer = setTimeout(() => {
       if (undone) return;
       ids.forEach((id) => call("remove", { id, deleteFile: false }));
+      pending(ids, false);
       setTimeout(() => {
         const h2 = new Set(this.hidden);
         ids.forEach((i) => h2.delete(i));
@@ -130,6 +142,8 @@ class Store {
         run: () => {
           undone = true;
           clearTimeout(timer);
+          pending(ids, false);
+          running.forEach((id) => call("resume", { id }));
           const h2 = new Set(this.hidden);
           ids.forEach((i) => h2.delete(i));
           this.hidden = h2;
@@ -145,6 +159,19 @@ class Store {
     applyLook(this.settings, themeChange);
     await call("set_settings", { s: this.settings });
   }
+}
+
+// geri al süresinde uygulama kapanırsa kaldırma bir sonraki açılışta tamamlansın
+const PENDING = "trawl.pendingRemove";
+function pending(ids: string[], add: boolean) {
+  const s = new Set<string>(JSON.parse(localStorage.getItem(PENDING) || "[]"));
+  ids.forEach((i) => (add ? s.add(i) : s.delete(i)));
+  localStorage.setItem(PENDING, JSON.stringify([...s]));
+}
+function flushPending() {
+  const ids: string[] = JSON.parse(localStorage.getItem(PENDING) || "[]");
+  ids.forEach((id) => call("remove", { id, deleteFile: false }));
+  localStorage.removeItem(PENDING);
 }
 
 function match(t: Task, f: string): boolean {

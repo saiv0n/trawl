@@ -11,7 +11,7 @@ export interface Task {
   finished: number; speed: number; eta: number; conns: number; segs: [number, number, number, number][]; stage: string;
   resumable: boolean; mode: string; quality: string;
 }
-export interface Snapshot { tasks: Task[]; speed: number; history: number[]; session: number; eta_total: number }
+export interface Snapshot { tasks: Task[]; speed: number; history: number[]; session: number; eta_total: number; ids?: string[] }
 export interface Settings {
   folder: string; connections: number; concurrent: number; speed_limit: number; categorize: boolean; clipboard: boolean;
   tray: boolean; sound: boolean; notify: boolean; after_all: string; auto_resume: boolean; default_height: number;

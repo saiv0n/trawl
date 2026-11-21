@@ -365,6 +365,10 @@ pub async fn fetch_page(url: &str, h: &BTreeMap<String, String>) -> Result<(Stri
     if !ct.is_empty() && !ct.contains("html") && !ct.contains("xml") && !ct.contains("text") {
         anyhow::bail!("NOTHTML:{ct}");
     }
+    // dev bir metin dosyası belleği doldurmasın. text() karakter kümesini çözdüğü için ondan vazgeçmedim
+    if r.content_length().unwrap_or(0) > 16 << 20 {
+        anyhow::bail!("NOTHTML:{ct}");
+    }
     let body = r.text().await?;
     Ok((fin, body))
 }

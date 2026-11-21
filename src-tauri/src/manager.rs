@@ -63,6 +63,9 @@ pub struct Snapshot {
     pub history: Vec<f64>,
     pub session: u64,
     pub eta_total: f64,
+    /// doluysa tasks yalnızca değişenler, sıra buradan
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ids: Option<Vec<String>>,
 }
 
 pub struct Manager {
@@ -86,6 +89,8 @@ pub struct Manager {
     pub ext_info: Mutex<(String, String)>,
     /// köprü portu açılamadıysa nedeni
     pub bridge_err: Mutex<String>,
+    last_views: Mutex<std::collections::HashMap<String, String>>,
+    last_saved: Mutex<Vec<u8>>,
 }
 
 fn state_path() -> PathBuf {
@@ -144,6 +149,8 @@ impl Manager {
             ext_seen: AtomicI64::new(0),
             ext_info: Mutex::new(Default::default()),
             bridge_err: Mutex::new(String::new()),
+            last_views: Mutex::new(Default::default()),
+            last_saved: Mutex::new(vec![]),
             settings: Mutex::new(sf.settings),
         });
         m.limiter.rate.store(m.settings.lock().speed_limit * 1024, Ordering::Relaxed);
@@ -167,14 +174,19 @@ impl Manager {
             .collect();
         let sf = StateFile { settings: self.settings.lock().clone(), tasks };
         if let Ok(b) = serde_json::to_vec(&sf) {
+            // değişmediyse diske dokunma
+            let mut last = self.last_saved.lock();
+            if *last == b {
+                return;
+            }
             let tmp = state_path().with_extension("tmp");
             let ok = std::fs::File::create(&tmp).and_then(|mut f| {
                 use std::io::Write;
                 f.write_all(&b)?;
                 f.sync_all()
             });
-            if ok.is_ok() {
-                let _ = std::fs::rename(tmp, state_path());
+            if ok.is_ok() && std::fs::rename(tmp, state_path()).is_ok() {
+                *last = b;
             }
         }
     }
@@ -190,7 +202,30 @@ impl Manager {
             history: self.history.lock().iter().copied().collect(),
             session: self.session_bytes.load(Ordering::Relaxed),
             eta_total: *self.eta_total.lock(),
+            ids: None,
         }
+    }
+
+    /// her tıkta bütün listeyi göndermek yerine değişen satırlar, 2 sn'de bir tamamı
+    fn tick_snapshot(&self, full: bool) -> Snapshot {
+        let mut s = self.snapshot();
+        let mut last = self.last_views.lock();
+        let ids: Vec<String> = s.tasks.iter().map(|t| t.id.clone()).collect();
+        let mut fresh = std::collections::HashMap::new();
+        let mut changed = vec![];
+        for v in s.tasks.drain(..) {
+            let j = serde_json::to_string(&v).unwrap_or_default();
+            if full || last.get(&v.id) != Some(&j) {
+                changed.push(v.clone());
+            }
+            fresh.insert(v.id, j);
+        }
+        *last = fresh;
+        s.tasks = changed;
+        if !full {
+            s.ids = Some(ids);
+        }
+        s
     }
 
     pub fn find(&self, id: &str) -> Option<Arc<Task>> {
@@ -201,6 +236,7 @@ impl Manager {
         let mut iv = tokio::time::interval(Duration::from_millis(250));
         let mut prev = Instant::now();
         let mut last_save = Instant::now();
+        let mut ticks = 0u64;
         loop {
             iv.tick().await;
             let dt = prev.elapsed().as_secs_f64().max(0.001);
@@ -266,7 +302,8 @@ impl Manager {
             if self.was_busy.swap(busy, Ordering::Relaxed) && !busy {
                 self.all_done();
             }
-            let _ = self.app.emit("tick", self.snapshot());
+            ticks += 1;
+            let _ = self.app.emit("tick", self.tick_snapshot(ticks % 8 == 0));
             if last_save.elapsed() > Duration::from_secs(3) {
                 last_save = Instant::now();
                 self.save();
@@ -492,6 +529,11 @@ impl Manager {
     pub fn resume(&self, id: &str) {
         let Some(t) = self.find(id) else { return };
         let mut d = t.d.lock();
+        // duraklatma henüz bitmediyse iş bitince sıraya girsin
+        if t.running.load(Ordering::SeqCst) && self.pausing.lock().contains(id) {
+            d.status = Status::Queued;
+            return;
+        }
         if matches!(d.status, Status::Paused | Status::Error) && !t.running.load(Ordering::SeqCst) {
             if d.status == Status::Error && d.kind == Kind::Http && !d.resumable {
                 d.segs.clear();
@@ -519,6 +561,9 @@ impl Manager {
             let _ = std::fs::remove_file(format!("{}.trawl", d.path));
             d.path.clear();
         }
+        if d.error.contains("parçalı") {
+            d.conns_max = 1;
+        }
         d.segs.clear();
         d.size = 0;
         d.validator.clear();
@@ -531,15 +576,17 @@ impl Manager {
         let Some(t) = self.find(id) else { return };
         t.removing.store(true, Ordering::SeqCst);
         t.token().cancel();
-        for _ in 0..60 {
+        for _ in 0..300 {
             if !t.running.load(Ordering::SeqCst) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+        // hâlâ yazıyorsa parça dosyasını silmek bozuk dosya bırakır, olduğu gibi kalsın
+        let stopped = !t.running.load(Ordering::SeqCst);
         self.tasks.lock().retain(|x| !Arc::ptr_eq(x, &t));
         let d = t.d.lock().clone();
-        if d.status != Status::Done {
+        if d.status != Status::Done && stopped {
             if !d.path.is_empty() {
                 let _ = std::fs::remove_file(format!("{}.trawl", d.path));
             }
@@ -594,6 +641,8 @@ impl Manager {
             let to = to.min(v.len());
             v.insert(to, t);
         }
+        drop(v);
+        self.save();
     }
 
     pub fn pause_all(&self) {

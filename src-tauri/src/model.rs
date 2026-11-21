@@ -402,6 +402,19 @@ impl Default for Settings {
 }
 
 pub fn dirs_download() -> std::path::PathBuf {
+    // kullanıcı İndirilenler'i başka sürücüye taşımış olabilir
+    unsafe {
+        use windows_sys::Win32::UI::Shell::{FOLDERID_Downloads, SHGetKnownFolderPath};
+        let mut p: windows_sys::core::PWSTR = std::ptr::null_mut();
+        if SHGetKnownFolderPath(&FOLDERID_Downloads, 0, std::ptr::null_mut(), &mut p) == 0 && !p.is_null() {
+            let n = (0..).take_while(|&i| *p.add(i) != 0).count();
+            let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, n));
+            windows_sys::Win32::System::Com::CoTaskMemFree(p.cast());
+            if !s.is_empty() {
+                return std::path::PathBuf::from(s);
+            }
+        }
+    }
     let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into());
     std::path::PathBuf::from(home).join("Downloads")
 }

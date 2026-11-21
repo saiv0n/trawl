@@ -101,6 +101,13 @@ pub fn safe_name(n: &str) -> String {
         .map(|c| if "<>:\"/\\|?*".contains(c) || (c as u32) < 32 { '_' } else { c })
         .collect();
     s = s.trim().trim_matches('.').trim().to_string();
+    // CON, NUL, COM1 gibi adlar uzantılı olsa da açılmıyor
+    let stem = s.split('.').next().unwrap_or("").trim().to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit());
+    if reserved {
+        s.insert(0, '_');
+    }
     if s.chars().count() > 200 {
         let ext = ext_of(&s);
         let stem: String = s.chars().take(190).collect();
