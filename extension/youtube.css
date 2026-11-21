@@ -1,0 +1,9 @@
+#trawl-yt-btn {
+  display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; margin-right: 8px; border-radius: 6px;
+  font: 600 14px/1 "Roboto", "Segoe UI", sans-serif; color: #fff; cursor: pointer; white-space: nowrap;
+  background: #2f5ad6; border: 0; transition: filter .12s;
+}
+#trawl-yt-btn:hover { filter: brightness(.92); }
+#trawl-yt-btn.busy { opacity: .7; }
+#trawl-yt-btn.ok { background: #2d7a4b; }
+#trawl-yt-btn.bad { background: #c2341d; }

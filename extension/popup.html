@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg: #eeebe4; --sf: #f8f6f1; --sf1: #e6e2d9; --line: #d8d3c8; --ink: #1a1814; --tx2: #6b665c; --tx3: #99938a; --sig: #2f5ad6; --ok: #2d7a4b; --bad: #c2341d; --mono: "Cascadia Mono", "JetBrains Mono", Consolas, monospace; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15130f; --sf: #1c1a16; --sf1: #26231e; --line: #2e2b25; --ink: #ede9e0; --tx2: #9a9488; --tx3: #6a655c; --sig: #7d9cf0; --ok: #5fb37e; --bad: #f06a52; } }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 380px; background: var(--bg); color: var(--ink); font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 9px; padding: 10px 12px; background: var(--sf); border-bottom: 1px solid var(--line); }
+  header img { width: 20px; height: 20px; }
+  header b { font-size: 13.5px; }
+  .st { margin-left: auto; display: flex; align-items: center; gap: 6px; font: 11px var(--mono); color: var(--tx2); }
+  .st i { width: 6px; height: 6px; border-radius: 1px; background: var(--bad); }
+  .st.on i { background: var(--ok); }
+  .acts { display: flex; gap: 6px; padding: 10px 12px; }
+  button { font: inherit; color: inherit; border: 0; cursor: pointer; background: none; }
+  .btn { flex: 1; height: 30px; border-radius: 6px; font-weight: 600; font-size: 12.5px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); background: var(--sf); }
+  .btn:hover { background: var(--sf1); }
+  .p { background: var(--sig); border-color: var(--sig); color: #fff; }
+  .p:hover { background: var(--sig); filter: brightness(.94); }
+  h4 { font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--tx3); padding: 4px 12px 6px; display: flex; justify-content: space-between; }
+  ul { list-style: none; max-height: 330px; overflow-y: auto; margin: 0 12px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--sf); }
+  li { display: flex; align-items: center; gap: 10px; padding: 0 6px 0 10px; height: 42px; border-bottom: 1px solid var(--line); }
+  li:last-child { border-bottom: 0; }
+  li:hover { background: var(--sf1); }
+  .k { width: 38px; font: 700 9.5px var(--mono); text-align: center; padding: 3px 0; border: 1px solid var(--line); border-radius: 4px; color: var(--tx2); flex: none; }
+  .k.stream { color: var(--sig); border-color: var(--sig); }
+  .n { flex: 1; min-width: 0; }
+  .n b { display: block; font-weight: 560; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .n small { color: var(--tx3); font: 11px var(--mono); }
+  .dl { width: 28px; height: 28px; border-radius: 6px; color: var(--tx2); display: grid; place-items: center; flex: none; }
+  .dl:hover { background: var(--ink); color: var(--bg); }
+  .dl:disabled { opacity: .35; cursor: not-allowed; background: none; color: var(--tx2); }
+  .drm { color: var(--bad); }
+  .site { display: flex; align-items: center; gap: 8px; margin: 0 12px 10px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--sf); font-size: 12.5px; cursor: pointer; }
+  .site input { accent-color: var(--sig); margin: 0; }
+  .site small { margin-left: auto; color: var(--tx3); font: 11px var(--mono); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { color: var(--tx2); padding: 18px 12px 20px; font-size: 12.5px; margin: 0 12px 12px; border: 1.5px dashed var(--line); border-radius: 6px; text-align: center; }
+  .off { margin: 10px 12px 0; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--bad); color: var(--bad); font-size: 12.5px; }
+</style>
+</head>
+<body>
+  <header><img src="icon48.png" alt=""><b>Trawl</b><span class="st" id="st"><i></i><span>Bağlanıyor</span></span></header>
+  <div id="off" class="off" hidden>Trawl uygulaması kapalı. Aç, sonra yeniden dene.</div>
+  <div class="acts">
+    <button class="btn p" id="page"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>Bu sayfayı indir</button>
+    <button class="btn" id="grab"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12 19 5"/></svg>Hepsini tara</button>
+  </div>
+  <label class="site" id="site" hidden><input type="checkbox" id="skip"><span>Bu sitede indirmeleri devralma</span><small id="host"></small></label>
+  <label class="site"><input type="checkbox" id="panel"><span>Videoların üstünde İndir düğmesi</span><small id="phost"></small></label>
+  <h4><span>Ağdan yakalanan</span><span id="cnt"></span></h4>
+  <ul id="list"></ul>
+  <script src="popup.js"></script>
+</body>
+</html>

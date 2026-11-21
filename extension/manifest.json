@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Trawl",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAohce5+Aowd0qwvvWMhz8Hl/IN5fT/UHAErBsIDPgmM7CmKDq93YOIjD8LYZDLLAgKJ1RS6aAuum9CBkhIV+wU7kgINk0joFP/WwGFzhRZWbzJneAHK1ySxEZ5eVG0eaHuH5AuVkzbTWn6AcvRex9pQoF/Spm8PQXk2z9U4kQzqTHl+SFL2kAaOgO1y1Nx663WSwROqbTjLFzk4v0S0zAzqPKl/BVvBDfzvdPu5kRYLJzZeaZMqQUiwVkd+ecP6raeABRhSE7YcE+Ps/uzFaBVTnpX6pR88rzpQfb+hoYdLTqmbJffZ3RJpMacOIt8ooGUAe7oWHH8Ba6L4GQy/kqzQIDAQAB",
+  "version": "1.7.0",
+  "description": "Sayfadaki videoyu, sesi ve dosyaları Trawl ile indir.",
+  "icons": { "16": "icon16.png", "32": "icon32.png", "48": "icon48.png", "128": "icon128.png" },
+  "action": { "default_popup": "popup.html", "default_icon": { "16": "icon16.png", "32": "icon32.png" } },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["webRequest", "downloads", "contextMenus", "cookies", "storage", "tabs", "scripting", "alarms", "nativeMessaging"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["hook.js"], "all_frames": true, "run_at": "document_start" },
+    { "matches": ["<all_urls>"], "js": ["main.js"], "world": "MAIN", "all_frames": true, "run_at": "document_start" },
+    { "matches": ["<all_urls>"], "js": ["panel.js"], "all_frames": true, "run_at": "document_idle" },
+    { "matches": ["https://www.youtube.com/*", "https://m.youtube.com/*", "https://music.youtube.com/*"], "js": ["youtube.js"], "css": ["youtube.css"], "run_at": "document_idle" }
+  ]
+}

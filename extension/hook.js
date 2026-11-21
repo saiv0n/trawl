@@ -1,0 +1,19 @@
+// Alt+tık ile link kurala bakmadan Trawl'a gitsin, chrome'un kendi Alt+tık indirmesinin yerine
+(() => {
+  const ME = Symbol("trawl");
+  window.__trawlHook = ME; // tekrar enjekte edilirse son gelen kazansın
+  addEventListener(
+    "click",
+    (e) => {
+      if (window.__trawlHook !== ME || !chrome.runtime?.id) return;
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+      const a = e.composedPath().find((n) => n instanceof HTMLAnchorElement || n instanceof HTMLAreaElement);
+      const href = a?.href;
+      if (!href || !/^https?:/i.test(href)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      chrome.runtime.sendMessage({ type: "alt", url: href, text: (a.textContent || "").trim().slice(0, 200) }).catch(() => {});
+    },
+    true
+  );
+})();
