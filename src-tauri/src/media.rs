@@ -54,7 +54,17 @@ fn add_headers(c: &mut Command, url: &str, h: &std::collections::BTreeMap<String
         }
         c.arg("--add-header").arg(format!("{k}:{v}"));
     }
+    let from = COOKIES_FROM.read().clone();
+    if !from.is_empty() {
+        c.arg("--cookies-from-browser").arg(from);
+    }
+    if let Some((u, p)) = login_for(url) {
+        c.arg("--username").arg(u).arg("--password").arg(p);
+    }
 }
+
+/// yaş sınırlı ve üyelik isteyen videolar için tarayıcının çerezleri
+pub static COOKIES_FROM: parking_lot::RwLock<String> = parking_lot::RwLock::new(String::new());
 
 #[derive(Serialize, Clone, Debug)]
 pub struct VideoOpt {
@@ -208,8 +218,14 @@ pub async fn run(t: Arc<Task>, m: Arc<Manager>) -> Result<()> {
     add_headers(&mut c, &url, &headers);
     // yt-dlp ortak sınırı bilmiyor, çalışan medya işleri arasında paylaştır
     let running = m.tasks.lock().iter().filter(|x| x.d.lock().kind == crate::model::Kind::Media && x.running.load(Ordering::SeqCst)).count().max(1) as u64;
-    let lim = m.settings.lock().speed_limit / running;
-    if m.settings.lock().speed_limit > 0 {
+    let global = m.limiter.rate.load(Ordering::Relaxed) / 1024;
+    let own = t.d.lock().speed_limit;
+    let lim = match (global / running, own) {
+        (0, o) => o,
+        (g, 0) => g,
+        (g, o) => g.min(o),
+    };
+    if lim > 0 {
         c.args(["--limit-rate", &format!("{}K", lim.max(1))]);
     }
     if o.mode == "audio" {

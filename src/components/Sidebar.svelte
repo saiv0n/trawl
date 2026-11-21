@@ -2,6 +2,7 @@
   import { tick } from "svelte";
   import Icon from "./Icon.svelte";
   import { store, CATS } from "../lib/store.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   // seçim göstergesi görünüm değişince kayar, ilk ölçümde kaymasın
   let nav: HTMLElement;
@@ -26,9 +27,9 @@
   const cats = Object.entries(CATS).map(([f, c]) => ({ f, label: c.label, icon: c.icon }));
 </script>
 
-<aside aria-label="Görünümler">
+<aside aria-label={t("Görünümler")}>
   <button class="btn btn-primary add" onclick={() => (store.modal = { type: "add" })}>
-    <Icon n="plus" size={14} />Bağlantı ekle<kbd>Ctrl N</kbd>
+    <Icon n="plus" size={14} />{t("Bağlantı ekle")}<kbd>Ctrl N</kbd>
   </button>
 
   <nav bind:this={nav}>
@@ -38,25 +39,25 @@
       {#if it.f !== "error" || n}
         <button class:on={store.filter === it.f} aria-current={store.filter === it.f} onclick={() => (store.filter = it.f)} style="--i:{i}">
           <Icon n={it.icon} size={16} filled={store.filter === it.f} />
-          <span class="ellip">{it.label}</span>
+          <span class="ellip">{t(it.label)}</span>
           {#if n}<em class="num" class:err={it.f === "error"}>{n}</em>{/if}
         </button>
       {/if}
     {/each}
-    <div class="group">Tür</div>
+    <div class="group">{t("Tür")}</div>
     {#each cats as it, i}
       {@const n = store.count(it.f)}
       <button class:on={store.filter === it.f} aria-current={store.filter === it.f} onclick={() => (store.filter = it.f)} style="--i:{i + 6}">
         <Icon n={it.icon} size={16} filled={store.filter === it.f} />
-        <span class="ellip">{it.label}</span>
+        <span class="ellip">{t(it.label)}</span>
         {#if n}<em class="num">{n}</em>{/if}
       </button>
     {/each}
   </nav>
 
   <div class="foot">
-    <button onclick={() => (store.modal = { type: "ext" })}><Icon n="puzzle" size={16} /><span>Tarayıcı eklentisi</span></button>
-    <button onclick={() => (store.modal = { type: "settings" })}><Icon n="gear" size={16} /><span>Ayarlar</span><kbd>Ctrl ,</kbd></button>
+    <button onclick={() => (store.modal = { type: "ext" })}><Icon n="puzzle" size={16} /><span>{t("Tarayıcı eklentisi")}</span></button>
+    <button onclick={() => (store.modal = { type: "settings" })}><Icon n="gear" size={16} /><span>{t("Ayarlar")}</span><kbd>Ctrl ,</kbd></button>
   </div>
 </aside>
 

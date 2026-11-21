@@ -4,6 +4,7 @@
   import { call } from "../lib/api";
   import { store, ACTIVE } from "../lib/store.svelte";
   import { bytes, speed, eta } from "../lib/fmt";
+  import { t } from "../lib/i18n.svelte";
 
   let cv: HTMLCanvasElement;
   let free = $state(0);
@@ -46,19 +47,19 @@
 </script>
 
 <footer>
-  <div class="spd" class:live={store.snap.speed > 0} aria-label="Toplam hız">
+  <div class="spd" class:live={store.snap.speed > 0} aria-label={t("Toplam hız")}>
     <Icon n="down" size={13} />
-    <b class="num">{store.snap.speed > 0 ? speed(store.snap.speed) : "0 B/sn"}</b>
+    <b class="num">{store.snap.speed > 0 ? speed(store.snap.speed) : t("0 B/sn")}</b>
     <canvas bind:this={cv} aria-hidden="true"></canvas>
   </div>
   <span class="sep"></span>
-  <span class="num">{active} indiriliyor</span>
-  {#if queued}<span class="num">{queued} sırada</span>{/if}
-  {#if store.snap.eta_total > 0}<span class="num">tümü için {eta(store.snap.eta_total)}</span>{/if}
+  <span class="num">{t("{n} indiriliyor", { n: active })}</span>
+  {#if queued}<span class="num">{t("{n} sırada", { n: queued })}</span>{/if}
+  {#if store.snap.eta_total > 0}<span class="num">{t("tümü için {eta}", { eta: eta(store.snap.eta_total) })}</span>{/if}
   <span class="fill"></span>
-  {#if store.settings?.speed_limit}<span class="num">Hız sınırı {bytes(store.settings.speed_limit * 1024)}/sn</span>{/if}
-  {#if store.snap.session}<span class="num">Bu oturumda {bytes(store.snap.session)}</span>{/if}
-  {#if free}<span class="num" class:low={free < 2 * 1024 ** 3}><Icon n="disk" size={13} />{bytes(free)} boş</span>{/if}
+  {#if store.settings?.speed_limit}<span class="num">{t("Hız sınırı {v}", { v: speed(store.settings.speed_limit * 1024) })}</span>{/if}
+  {#if store.snap.session}<span class="num">{t("Bu oturumda {v}", { v: bytes(store.snap.session) })}</span>{/if}
+  {#if free}<span class="num" class:low={free < 2 * 1024 ** 3}><Icon n="disk" size={13} />{t("{v} boş", { v: bytes(free) })}</span>{/if}
 </footer>
 
 <style>

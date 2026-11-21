@@ -4,6 +4,7 @@
   import { call, type Task } from "../lib/api";
   import { store, toasts, ACTIVE } from "../lib/store.svelte";
   import { bytes, speed, eta, absTime, host } from "../lib/fmt";
+  import { t as tr, locale } from "../lib/i18n.svelte";
 
   let { t }: { t: Task | undefined } = $props();
   const active = $derived(!!t && ACTIVE.has(t.status));
@@ -19,28 +20,29 @@
     if (!t || !sum.trim()) return;
     sumBusy = true; sumRes = null;
     try { sumRes = await call("verify_hash", { id: t.id, expected: sum }); }
-    catch (x) { toasts.push({ kind: "error", title: "Doğrulanamadı", body: String(x) }); }
+    catch (x) { toasts.push({ kind: "error", title: tr("Doğrulanamadı"), body: tr(String(x)) }); }
     sumBusy = false;
   }
 
   function copy(s: string) {
     call("write_clipboard", { text: s });
-    toasts.push({ kind: "ok", title: "Panoya kopyalandı", ttl: 1500 });
+    toasts.push({ kind: "ok", title: tr("Panoya kopyalandı"), ttl: 1500 });
   }
+  const LIMITS = [0, 128, 256, 512, 1024, 2048, 5120, 10240, 25600];
   async function open() {
-    try { await call("open_task", { id: t!.id }); } catch (x) { toasts.push({ kind: "error", title: "Açılamadı", body: String(x) }); }
+    try { await call("open_task", { id: t!.id }); } catch (x) { toasts.push({ kind: "error", title: tr("Açılamadı"), body: tr(String(x)) }); }
   }
 </script>
 
-<section class="panel" aria-label="Ayrıntılar">
+<section class="panel" aria-label={tr("Ayrıntılar")}>
   {#if !t}
     <div class="none">
       {#if store.selected.size > 1}
-        <b class="num">{store.selected.size} indirme seçildi</b>
-        <p>Toplu işlemler üstteki çubukta.</p>
+        <b class="num">{tr("{n} indirme seçildi", { n: store.selected.size })}</b>
+        <p>{tr("Toplu işlemler üstteki çubukta.")}</p>
       {:else}
-        <b>Bir indirme seçin</b>
-        <p>Ayrıntılar, parçalar ve bağlantı burada görünür.</p>
+        <b>{tr("Bir indirme seçin")}</b>
+        <p>{tr("Ayrıntılar, parçalar ve bağlantı burada görünür.")}</p>
       {/if}
     </div>
   {:else}
@@ -51,71 +53,81 @@
       <h2 class="selectable">{t.name || t.title || host(t.url)}</h2>
 
       {#if t.status === "error"}
-        <div class="alert" role="alert"><Icon n="warn" size={16} filled /><p class="selectable">{t.error}</p></div>
+        <div class="alert" role="alert"><Icon n="warn" size={16} filled /><p class="selectable">{tr(t.error)}</p></div>
       {/if}
 
       {#if t.status !== "done"}
         <div class="prog">
           <div class="pline num">
-            <b>{t.size ? `%${(pct * 100).toLocaleString("tr-TR", { maximumFractionDigits: 1 })}` : bytes(t.done)}</b>
-            <span>{active && t.speed > 0 ? speed(t.speed) : ""}{active && t.eta >= 0 ? ` · ${eta(t.eta)} kaldı` : active && t.eta === -2 ? " · Bekleniyor" : ""}</span>
+            <b>{t.size ? tr("%{n}", { n: (pct * 100).toLocaleString(locale(), { maximumFractionDigits: 1 }) }) : bytes(t.done)}</b>
+            <span>{active && t.speed > 0 ? speed(t.speed) : ""}{active && t.eta >= 0 ? ` · ${tr("{eta} kaldı", { eta: eta(t.eta) })}` : active && t.eta === -2 ? ` · ${tr("Bekleniyor")}` : ""}</span>
           </div>
           <Progress {pct} segs={t.segs} height={8} state={t.status === "processing" ? "phase" : t.status === "probing" || (active && !t.size) ? "indet" : t.status === "downloading" ? "active" : t.status === "error" ? "error" : "paused"} />
-          {#if t.status === "processing" && t.stage}<p class="phase"><span class="spinner"></span>{t.stage}</p>{/if}
+          {#if t.status === "processing" && t.stage}<p class="phase"><span class="spinner"></span>{tr(t.stage)}</p>{/if}
         </div>
       {/if}
 
       <dl>
-        <dt>Boyut</dt><dd class="num">{t.size ? bytes(t.size) : "Bilinmiyor"}</dd>
-        {#if t.status !== "done"}<dt>İnen</dt><dd class="num">{bytes(t.done)}</dd>{/if}
-        {#if t.kind === "http" && t.segs.length}<dt>Bağlantı</dt><dd class="num">{t.conns} açık · {t.segs.length} parça</dd>{/if}
-        <dt>Devam</dt><dd>{t.kind === "media" || t.resumable ? "Kaldığı yerden sürer" : "Desteklenmiyor, baştan iner"}</dd>
-        {#if t.quality}<dt>Biçim</dt><dd>{t.quality}</dd>{/if}
-        <dt>Eklendi</dt><dd class="num">{absTime(t.created)}</dd>
-        {#if t.finished}<dt>Bitti</dt><dd class="num">{absTime(t.finished)}</dd>{/if}
+        <dt>{tr("Boyut")}</dt><dd class="num">{t.size ? bytes(t.size) : tr("Bilinmiyor")}</dd>
+        {#if t.status !== "done"}<dt>{tr("İnen")}</dt><dd class="num">{bytes(t.done)}</dd>{/if}
+        {#if t.kind === "http" && t.segs.length}<dt>{tr("Bağlantı")}</dt><dd class="num">{tr("{c} açık · {s} parça", { c: t.conns, s: t.segs.length })}</dd>{/if}
+        <dt>{tr("Devam")}</dt><dd>{tr(t.kind === "media" || t.resumable ? "Kaldığı yerden sürer" : "Desteklenmiyor, baştan iner")}</dd>
+        {#if t.status !== "done"}
+          <dt>{tr("Hız sınırı")}</dt>
+          <dd>
+            <select class="lim num" value={t.speed_limit || 0} onchange={(e) => call("set_task_limit", { id: t.id, kb: +e.currentTarget.value })} aria-label={tr("Bu indirmenin hız sınırı")}>
+              {#each LIMITS as l}<option value={l}>{l ? speed(l * 1024) : tr("Sınırsız")}</option>{/each}
+              {#if t.speed_limit && !LIMITS.includes(t.speed_limit)}<option value={t.speed_limit}>{speed(t.speed_limit * 1024)}</option>{/if}
+            </select>
+          </dd>
+        {/if}
+        {#if t.verified}<dt>{tr("Sağlama")}</dt><dd class="ok">{tr("{algo} sunucudakiyle aynı", { algo: t.verified })}</dd>{/if}
+        {#if t.quality}<dt>{tr("Biçim")}</dt><dd>{t.quality}</dd>{/if}
+        <dt>{tr("Eklendi")}</dt><dd class="num">{absTime(t.created)}</dd>
+        {#if t.finished}<dt>{tr("Bitti")}</dt><dd class="num">{absTime(t.finished)}</dd>{/if}
       </dl>
 
       <div class="field-row">
-        <span class="label">Bağlantı</span>
-        <div class="copyline"><span class="mono ellip selectable">{t.url}</span><button class="icon-btn" aria-label="Bağlantıyı kopyala" data-tip="Kopyala" onclick={() => copy(t.url)}><Icon n="copy" size={14} /></button></div>
+        <span class="label">{tr("Bağlantı")}</span>
+        <div class="copyline"><span class="mono ellip selectable">{t.url}</span><button class="icon-btn" aria-label={tr("Bağlantıyı kopyala")} data-tip={tr("Kopyala")} onclick={() => copy(t.url)}><Icon n="copy" size={14} /></button></div>
       </div>
       {#if t.page && t.page !== t.url}
         <div class="field-row">
-          <span class="label">Kaynak sayfa</span>
-          <div class="copyline"><span class="mono ellip selectable">{t.page}</span><button class="icon-btn" aria-label="Sayfayı aç" data-tip="Tarayıcıda aç" onclick={() => import("@tauri-apps/plugin-opener").then((m) => m.openUrl(t.page)).catch(() => copy(t.page))}><Icon n="external" size={14} /></button></div>
+          <span class="label">{tr("Kaynak sayfa")}</span>
+          <div class="copyline"><span class="mono ellip selectable">{t.page}</span><button class="icon-btn" aria-label={tr("Sayfayı aç")} data-tip={tr("Tarayıcıda aç")} onclick={() => import("@tauri-apps/plugin-opener").then((m) => m.openUrl(t.page)).catch(() => copy(t.page))}><Icon n="external" size={14} /></button></div>
         </div>
       {/if}
       <div class="field-row">
-        <span class="label">Konum</span>
-        <div class="copyline"><span class="mono ellip selectable">{t.path || t.folder}</span><button class="icon-btn" aria-label="Klasörde göster" data-tip="Klasörde göster" onclick={() => call("reveal_task", { id: t.id })}><Icon n="folder" size={14} /></button></div>
+        <span class="label">{tr("Konum")}</span>
+        <div class="copyline"><span class="mono ellip selectable">{t.path || t.folder}</span><button class="icon-btn" aria-label={tr("Klasörde göster")} data-tip={tr("Klasörde göster")} onclick={() => call("reveal_task", { id: t.id })}><Icon n="folder" size={14} /></button></div>
       </div>
     </div>
 
     {#if t.status === "done" && t.path}
       <div class="sum">
-        <b>Sağlama</b>
+        <b>{tr("Sağlama")}</b>
         <div class="row">
-          <input class="mono" spellcheck="false" placeholder="MD5, SHA-1 ya da SHA-256 yapıştırın" bind:value={sum} onkeydown={(e) => e.key === "Enter" && verify()} aria-label="Beklenen sağlama değeri" />
-          <button class="btn btn-sm" disabled={sumBusy || !sum.trim()} onclick={verify}>{#if sumBusy}<span class="spinner"></span>{/if}Doğrula</button>
+          <input class="mono" spellcheck="false" placeholder={tr("MD5, SHA-1 ya da SHA-256 yapıştırın")} bind:value={sum} onkeydown={(e) => e.key === "Enter" && verify()} aria-label={tr("Beklenen sağlama değeri")} />
+          <button class="btn btn-sm" disabled={sumBusy || !sum.trim()} onclick={verify}>{#if sumBusy}<span class="spinner"></span>{/if}{tr("Doğrula")}</button>
         </div>
-        {#if sumRes}<p class="res" class:bad={!sumRes.ok}>{sumRes.ok ? `${sumRes.algo} tutuyor, dosya sağlam` : `${sumRes.algo} tutmuyor. Dosya bozuk ya da değiştirilmiş olabilir`}</p>{/if}
+        {#if sumRes}<p class="res" class:bad={!sumRes.ok}>{tr(sumRes.ok ? "{algo} tutuyor, dosya sağlam" : "{algo} tutmuyor. Dosya bozuk ya da değiştirilmiş olabilir", { algo: sumRes.algo })}</p>{/if}
       </div>
     {/if}
     <div class="acts">
       {#if t.status === "done"}
-        <button class="btn btn-primary" onclick={open}><Icon n="external" size={14} />Aç</button>
+        <button class="btn btn-primary" onclick={open}><Icon n="external" size={14} />{tr("Aç")}</button>
       {:else if active && t.status !== "processing"}
-        <button class="btn" onclick={() => call("pause", { id: t.id })}><Icon n="pause" size={14} />Duraklat</button>
+        <button class="btn" onclick={() => call("pause", { id: t.id })}><Icon n="pause" size={14} />{tr("Duraklat")}</button>
       {:else if t.status !== "processing"}
-        <button class="btn btn-primary" onclick={() => call("resume", { id: t.id })}><Icon n={t.status === "error" ? "retry" : "play"} size={14} />{t.status === "error" ? "Yeniden dene" : "Sürdür"}</button>
+        <button class="btn btn-primary" onclick={() => call("resume", { id: t.id })}><Icon n={t.status === "error" ? "retry" : "play"} size={14} />{tr(t.status === "error" ? "Yeniden dene" : "Sürdür")}</button>
       {/if}
       {#if !active && t.status !== "done"}
-        <button class="btn" onclick={() => (store.modal = { type: "update-url", id: t.id })}><Icon n="link" size={14} />Bağlantıyı güncelle</button>
+        <button class="btn" onclick={() => (store.modal = { type: "update-url", id: t.id })}><Icon n="link" size={14} />{tr("Bağlantıyı güncelle")}</button>
       {/if}
       <div class="more">
-        {#if !active}<button class="btn btn-ghost btn-sm" onclick={() => call("restart", { id: t.id })}><Icon n="retry" size={14} />Baştan indir</button>{/if}
-        <button class="btn btn-ghost btn-sm" onclick={() => store.remove([t.id])}><Icon n="x" size={14} />Listeden kaldır</button>
-        {#if t.path}<button class="btn btn-ghost btn-sm btn-danger" onclick={() => (store.modal = { type: "confirm-delete", ids: [t.id] })}><Icon n="trash" size={14} />Diskten sil</button>{/if}
+        {#if !active}<button class="btn btn-ghost btn-sm" onclick={() => call("restart", { id: t.id })}><Icon n="retry" size={14} />{tr("Baştan indir")}</button>{/if}
+        <button class="btn btn-ghost btn-sm" onclick={() => store.remove([t.id])}><Icon n="x" size={14} />{tr("Listeden kaldır")}</button>
+        {#if t.path}<button class="btn btn-ghost btn-sm btn-danger" onclick={() => (store.modal = { type: "confirm-delete", ids: [t.id] })}><Icon n="trash" size={14} />{tr("Diskten sil")}</button>{/if}
       </div>
     </div>
   {/if}
@@ -145,6 +157,8 @@
   dl { display: grid; grid-template-columns: 80px 1fr; gap: 6px 12px; font-size: 12.5px; }
   dt { color: var(--text-3); }
   dd { color: var(--text); min-width: 0; }
+  dd.ok { color: var(--ok); }
+  .lim { font: inherit; color: var(--text); background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 1px 4px; }
   .field-row { display: flex; flex-direction: column; gap: 4px; }
   .copyline { display: flex; align-items: center; gap: 4px; padding-left: 10px; height: 32px; border-radius: var(--r-2); background: var(--surface-2); border: 1px solid var(--border-subtle); }
   .copyline .mono { flex: 1; color: var(--text-2); }

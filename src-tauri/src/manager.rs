@@ -8,11 +8,26 @@ use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use chrono::Datelike;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager as _};
 use tokio_util::sync::CancellationToken;
 
 pub const STOPPED: &str = "__durduruldu__";
+const NET_RETRIES: u32 = 6;
+
+fn net_error(e: &anyhow::Error) -> bool {
+    let s = format!("{e:#}");
+    e.chain().any(|c| c.downcast_ref::<reqwest::Error>().is_some_and(|r| r.is_connect() || r.is_timeout() || r.is_request() || r.is_body()))
+        || s.contains("zaman aşımı")
+        || s.contains("Sunucu yanıt vermiyor")
+}
+
+fn suspend(hibernate: bool) {
+    std::thread::spawn(move || unsafe {
+        windows_sys::Win32::System::Power::SetSuspendState(hibernate.into(), false.into(), false.into());
+    });
+}
 
 pub struct Limiter {
     pub rate: AtomicU64,
@@ -91,6 +106,23 @@ pub struct Manager {
     pub bridge_err: Mutex<String>,
     last_views: Mutex<std::collections::HashMap<String, String>>,
     last_saved: Mutex<Vec<u8>>,
+    /// zamanlayıcı aralığında mıydık, None henüz bakılmadı
+    sched_in: Mutex<Option<bool>>,
+    sched_ids: Mutex<std::collections::HashSet<String>>,
+}
+
+/// o anki genel sınır (KB/s), aralıktaysa ikinci sınır
+fn rate_now(s: &Settings) -> u64 {
+    let hm = chrono::Local::now().format("%H:%M").to_string();
+    if s.alt_limit && in_window(&hm, &s.alt_start, &s.alt_stop) { s.alt_speed } else { s.speed_limit }
+}
+
+/// "SS:DD" karşılaştırması, gece yarısını aşan aralık da olur (23:00-06:00)
+fn in_window(now: &str, start: &str, stop: &str) -> bool {
+    if start == stop {
+        return false;
+    }
+    if start < stop { start <= now && now < stop } else { now >= start || now < stop }
 }
 
 fn state_path() -> PathBuf {
@@ -101,6 +133,9 @@ fn read_state(p: &std::path::Path) -> Option<StateFile> {
     let mut sf: StateFile = serde_json::from_slice(&std::fs::read(p).ok()?).ok()?;
     for t in sf.tasks.iter_mut() {
         unseal_headers(&mut t.headers);
+    }
+    for l in sf.settings.logins.iter_mut() {
+        l.pass = unseal_str(&l.pass);
     }
     Some(sf)
 }
@@ -151,19 +186,23 @@ impl Manager {
             bridge_err: Mutex::new(String::new()),
             last_views: Mutex::new(Default::default()),
             last_saved: Mutex::new(vec![]),
+            sched_in: Mutex::new(None),
+            sched_ids: Mutex::new(Default::default()),
             settings: Mutex::new(sf.settings),
         });
-        m.limiter.rate.store(m.settings.lock().speed_limit * 1024, Ordering::Relaxed);
+        m.limiter.rate.store(rate_now(&m.settings.lock()) * 1024, Ordering::Relaxed);
         set_proxy(&m.settings.lock().proxy);
+        http::HOST_CONNS.store(m.settings.lock().host_conns, Ordering::Relaxed);
+        set_logins(&m.settings.lock().logins);
+        *media::COOKIES_FROM.write() = m.settings.lock().cookies_from.clone();
         let mm = m.clone();
         tauri::async_runtime::spawn(async move { mm.run_loop().await });
         m
     }
 
     pub fn save(&self) {
-        let tasks = self
-            .tasks
-            .lock()
+        let list = self.tasks.lock().clone();
+        let tasks = list
             .iter()
             .map(|t| {
                 let mut d = t.d.lock().clone();
@@ -173,7 +212,18 @@ impl Manager {
                 d
             })
             .collect();
-        let sf = StateFile { settings: self.settings.lock().clone(), tasks };
+        // kayıttaki baytlar diske inmeden yazılırsa elektrik kesintisinde dosya sessizce bozulur
+        for t in &list {
+            let f = t.file.lock().clone();
+            if let Some(f) = f {
+                let _ = f.sync_data();
+            }
+        }
+        let mut settings = self.settings.lock().clone();
+        for l in settings.logins.iter_mut() {
+            l.pass = seal_str(&l.pass);
+        }
+        let sf = StateFile { settings, tasks };
         if let Ok(b) = serde_json::to_vec(&sf) {
             // değişmediyse diske dokunma
             let mut last = self.last_saved.lock();
@@ -239,6 +289,7 @@ impl Manager {
         let mut last_save = Instant::now();
         let mut ticks = 0u64;
         let mut minute = String::new();
+        let mut saving: Option<tokio::task::JoinHandle<()>> = None;
         loop {
             iv.tick().await;
             let dt = prev.elapsed().as_secs_f64().max(0.001);
@@ -295,7 +346,7 @@ impl Manager {
                 if slots == 0 {
                     break;
                 }
-                if t.status() == Status::Queued && !t.running.load(Ordering::SeqCst) {
+                if t.status() == Status::Queued && !t.running.load(Ordering::SeqCst) && t.d.lock().retry_at <= now() {
                     self.start(t.clone());
                     slots -= 1;
                 }
@@ -309,31 +360,55 @@ impl Manager {
             if hm != minute {
                 minute = hm;
                 self.schedule_tick(&minute);
+                self.limiter.rate.store(rate_now(&self.settings.lock()) * 1024, Ordering::Relaxed);
             }
             let _ = self.app.emit("tick", self.tick_snapshot(ticks.is_multiple_of(8)));
-            if last_save.elapsed() > Duration::from_secs(3) {
+            // sync_data yavaş diskte uzun sürebilir, tik beklemesin
+            if last_save.elapsed() > Duration::from_secs(3) && saving.as_ref().is_none_or(|h| h.is_finished()) {
                 last_save = Instant::now();
-                self.save();
+                let m = self.clone();
+                saving = Some(tokio::task::spawn_blocking(move || m.save()));
             }
         }
     }
 
-    /// zamanlayıcı: başlangıç dakikasında sıradakileri başlat, bitişte duraklat
+    /// zamanlayıcı: aralığa girince sıradakileri başlat, çıkınca onları duraklat.
+    /// tam dakikaya bakmıyoruz, uykudan sonra kaçan geçişi de yakalasın
     fn schedule_tick(&self, hm: &str) {
-        let (on, start, stop) = {
+        let (on, start, stop, days) = {
             let s = self.settings.lock();
-            (s.schedule, s.schedule_start.clone(), s.schedule_stop.clone())
+            (s.schedule, s.schedule_start.clone(), s.schedule_stop.clone(), s.schedule_days.clone())
         };
+        let mut prev = self.sched_in.lock();
         if !on {
+            *prev = None;
+            self.sched_ids.lock().clear();
             return;
         }
-        if hm == start {
-            self.resume_all();
-            self.notice(serde_json::json!({"type": "schedule", "start": true}));
-        } else if hm == stop {
-            self.pause_all();
-            self.notice(serde_json::json!({"type": "schedule", "start": false}));
+        let today = chrono::Local::now().weekday().num_days_from_monday() as u8;
+        // gece yarısını aşan aralıkta sabah kısmı dünün aralığı
+        let day = if start > stop && hm < stop.as_str() { (today + 6) % 7 } else { today };
+        let inside = in_window(hm, &start, &stop) && days.contains(&day);
+        let was = prev.replace(inside);
+        // ilk bakışta bir şey yapma, açılışta kullanıcının duraklattıkları başlamasın
+        if was.is_none() || was == Some(inside) {
+            return;
         }
+        if inside {
+            let ids: Vec<String> = self.tasks.lock().iter().filter(|t| t.status() == Status::Paused).map(|t| t.id()).collect();
+            for i in &ids {
+                self.resume(i);
+            }
+            *self.sched_ids.lock() = ids.into_iter().collect();
+        } else {
+            // elle başlatılanlara dokunma, sadece bizim başlattıklarımız ve sırada bekleyenler
+            let ids = std::mem::take(&mut *self.sched_ids.lock());
+            let list: Vec<String> = self.tasks.lock().iter().filter(|t| ids.contains(&t.id()) || t.status() == Status::Queued).map(|t| t.id()).collect();
+            for i in list {
+                self.pause(&i);
+            }
+        }
+        self.notice(serde_json::json!({"type": "schedule", "start": inside}));
     }
 
     /// Görev çubuğu düğmesinde toplam ilerleme (yalnızca değişince).
@@ -376,12 +451,9 @@ impl Manager {
             "shutdown" => {
                 let _ = std::process::Command::new("shutdown").args(["/s", "/t", "60"]).creation_flags(NO_WINDOW).spawn();
             }
-            "sleep" => {
-                let _ = std::process::Command::new("rundll32.exe")
-                    .args(["powrprof.dll,SetSuspendState", "0,1,0"])
-                    .creation_flags(NO_WINDOW)
-                    .spawn();
-            }
+            // rundll32 ile çağırınca argümanlar yanlış geçiyor, hazırda bekletme açıksa uyutmak yerine onu yapıyordu
+            "sleep" => suspend(false),
+            "hibernate" => suspend(true),
             "quit" => {
                 self.save();
                 self.app.exit(0);
@@ -397,6 +469,7 @@ impl Manager {
             let mut d = t.d.lock();
             d.status = if d.kind == Kind::Http { Status::Probing } else { Status::Downloading };
             d.error.clear();
+            d.stage.clear();
         }
         t.last.store(t.get_done(), Ordering::Relaxed);
         let m = self.clone();
@@ -407,6 +480,11 @@ impl Manager {
                 Kind::Media => media::run(t.clone(), m.clone()).await,
             };
             t.conns.store(0, Ordering::Relaxed);
+            // sağlama ya da tarama tutmazsa normal bir hata gibi gösterilsin
+            let r = match r {
+                Ok(()) => crate::post::run(&m, &t).await.map_err(|x| anyhow::anyhow!(x)),
+                e => e,
+            };
             let id = t.id();
             let paused = m.pausing.lock().remove(&id);
             match r {
@@ -414,6 +492,8 @@ impl Manager {
                     let (name, path) = {
                         let mut d = t.d.lock();
                         d.status = Status::Done;
+                        d.net_retries = 0;
+                        d.retry_at = 0;
                         d.finished = now();
                         d.refresh_tries = 0;
                         d.stage.clear();
@@ -443,6 +523,14 @@ impl Manager {
                         }
                     } else if crate::refresh::try_start(&m, &t, &format!("{e:#}")) {
                         // eklenti sayfayı açıp yeni bağlantıyı getirecek
+                    } else if net_error(&e) && t.d.lock().net_retries < NET_RETRIES {
+                        // ağ gitmiş, biraz sonra kendiliğinden yeniden dene
+                        let mut d = t.d.lock();
+                        let wait = 15i64 << d.net_retries.min(5);
+                        d.net_retries += 1;
+                        d.retry_at = now() + wait;
+                        d.status = Status::Queued;
+                        d.stage = "Ağ bekleniyor".into();
                     } else {
                         let msg = format!("{e:#}");
                         let (msg, tools) = match msg.strip_prefix("TOOLS:") {
@@ -480,6 +568,12 @@ impl Manager {
         let _ = self.app.notification().builder().title(title).body(body).show();
     }
 
+    /// kullanıcının kuralı tutarsa onun klasörü, yoksa türün klasörü
+    pub fn folder_by_rule(&self, name: &str, url: &str, cat: &str) -> String {
+        let hit = self.settings.lock().rules.iter().find(|r| r.hits(name, url)).map(|r| r.folder.clone());
+        hit.unwrap_or_else(|| self.folder_for(cat))
+    }
+
     pub fn folder_for(&self, cat: &str) -> String {
         let s = self.settings.lock();
         if s.categorize {
@@ -502,14 +596,16 @@ impl Manager {
     pub fn add_http(&self, url: String, name: String, headers: BTreeMap<String, String>, folder: String, conns: u32, start: bool, page: String) -> String {
         let name = if name.is_empty() { String::new() } else { safe_name(&name) };
         let cat = category_of(if name.is_empty() { &url } else { &name });
-        let cat = if cat == "diger" { category_of(&name_from_url(&url)) } else { cat };
+        let fallback = name_from_url(&url);
+        let cat = if cat == "diger" { category_of(&fallback) } else { cat };
+        let folder = if folder.is_empty() { self.folder_by_rule(if name.is_empty() { &fallback } else { &name }, &url, &cat) } else { folder };
         self.push(TaskData {
             id: uuid::Uuid::new_v4().simple().to_string()[..12].to_string(),
             kind: Kind::Http,
             url,
             page,
             name,
-            folder: if folder.is_empty() { self.folder_for(&cat) } else { folder },
+            folder,
             category: cat,
             headers,
             conns_max: conns,
@@ -521,13 +617,19 @@ impl Manager {
     #[allow(clippy::too_many_arguments)]
     pub fn add_media(&self, url: String, opts: MediaOpts, title: String, thumb: String, folder: String, headers: BTreeMap<String, String>, start: bool) -> String {
         let cat = if opts.mode == "audio" { "muzik" } else { "video" };
+        let folder = if folder.is_empty() {
+            let ext = if opts.mode == "audio" { &opts.codec } else { &opts.container };
+            self.folder_by_rule(&format!("x.{ext}"), &url, cat)
+        } else {
+            folder
+        };
         self.push(TaskData {
             id: uuid::Uuid::new_v4().simple().to_string()[..12].to_string(),
             kind: Kind::Media,
             url,
             title,
             thumb,
-            folder: if folder.is_empty() { self.folder_for(cat) } else { folder },
+            folder,
             category: cat.into(),
             headers,
             opts,
@@ -566,6 +668,9 @@ impl Manager {
             }
             d.status = Status::Queued;
             d.error.clear();
+            d.net_retries = 0;
+            d.retry_at = 0;
+            d.stage.clear();
         }
     }
 
@@ -592,6 +697,8 @@ impl Manager {
         d.segs.clear();
         d.size = 0;
         d.validator.clear();
+        d.net_retries = 0;
+        d.retry_at = 0;
         d.status = Status::Queued;
         d.error.clear();
         t.set_done(0);
@@ -659,6 +766,14 @@ impl Manager {
         Ok(())
     }
 
+    /// KB/s, 0 sınırsız. medya işinde yt-dlp yeniden başlayınca geçerli olur
+    pub fn set_task_limit(&self, id: &str, kb: u64) {
+        let Some(t) = self.find(id) else { return };
+        t.d.lock().speed_limit = kb;
+        t.lim.rate.store(kb * 1024, Ordering::Relaxed);
+        self.save();
+    }
+
     pub fn move_task(&self, id: &str, to: usize) {
         let mut v = self.tasks.lock();
         if let Some(i) = v.iter().position(|t| t.d.lock().id == id) {
@@ -691,7 +806,10 @@ impl Manager {
 
     pub fn set_settings(&self, s: Settings) {
         set_proxy(&s.proxy);
-        self.limiter.rate.store(s.speed_limit * 1024, Ordering::Relaxed);
+        http::HOST_CONNS.store(s.host_conns, Ordering::Relaxed);
+        set_logins(&s.logins);
+        *media::COOKIES_FROM.write() = s.cookies_from.clone();
+        self.limiter.rate.store(rate_now(&s) * 1024, Ordering::Relaxed);
         *self.settings.lock() = s;
         self.save();
     }
@@ -721,5 +839,20 @@ impl Manager {
             }
         }
         self.save();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::in_window;
+
+    #[test]
+    fn schedule_window() {
+        assert!(in_window("02:30", "02:00", "06:00"));
+        assert!(!in_window("06:00", "02:00", "06:00"));
+        assert!(in_window("23:30", "23:00", "06:00"));
+        assert!(in_window("01:00", "23:00", "06:00"));
+        assert!(!in_window("12:00", "23:00", "06:00"));
+        assert!(!in_window("12:00", "12:00", "12:00"));
     }
 }

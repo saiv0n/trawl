@@ -17,6 +17,7 @@
   import { call, on, inTauri } from "./lib/api";
   import { store, toasts, chime, applyLook, watchSystem, reducedMotion, CATS, ACTIVE } from "./lib/store.svelte";
   import { host, bytes, kindOfExt } from "./lib/fmt";
+  import { t as tr } from "./lib/i18n.svelte";
 
   let tb: TitleBar;
   let omni = $state("");
@@ -46,7 +47,7 @@
   }
 
   const TITLES: Record<string, string> = { all: "Tüm indirmeler", active: "İndiriliyor", queued: "Sırada", done: "Tamamlanan", error: "İndirilemeyen" };
-  const title = $derived(TITLES[store.filter] || CATS[store.filter]?.label || "");
+  const title = $derived(tr(TITLES[store.filter] || CATS[store.filter]?.label || ""));
   const selIds = $derived([...store.selected].filter((id) => store.tasks.some((t) => t.id === id)));
   const missingTools = $derived(store.tools && (!store.tools.ytdlp || !store.tools.ffmpeg));
   const anyActive = $derived(store.tasks.some((t) => ACTIVE.has(t.status)));
@@ -73,7 +74,7 @@
     const sel = new Set(store.selected);
     ids.forEach((i) => sel.delete(i));
     store.selected = sel;
-    toasts.push({ kind: "ok", title: ids.length === 1 ? "Dosya Geri Dönüşüm Kutusu'na taşındı" : `${ids.length} dosya Geri Dönüşüm Kutusu'na taşındı` });
+    toasts.push({ kind: "ok", title: ids.length === 1 ? tr("Dosya Geri Dönüşüm Kutusu'na taşındı") : tr("{n} dosya Geri Dönüşüm Kutusu'na taşındı", { n: ids.length }) });
   }
   let newUrl = $state("");
   let urlErr = $state("");
@@ -84,8 +85,8 @@
       await call("update_url", { id, url: newUrl.trim() });
       store.modal = null;
       newUrl = "";
-      toasts.push({ kind: "ok", title: "Bağlantı güncellendi, indirme kaldığı yerden sürüyor" });
-    } catch (e) { urlErr = String(e); }
+      toasts.push({ kind: "ok", title: tr("Bağlantı güncellendi, indirme kaldığı yerden sürüyor") });
+    } catch (e) { urlErr = tr(String(e)); }
     urlBusy = false;
   }
   const delInfo = $derived.by(() => {
@@ -109,17 +110,20 @@
         }
         lastDoneAt = now;
         if (!document.hasFocus())
-          toasts.push({ kind: "ok", title: "İndirme tamamlandı", body: n.name, actions: [{ label: "Aç", primary: true, run: () => call("open_task", { id: n.id }) }] });
+          toasts.push({ kind: "ok", title: tr("İndirme tamamlandı"), body: n.name, actions: [{ label: tr("Aç"), primary: true, run: () => call("open_task", { id: n.id }) }] });
         break;
       }
       case "error":
         toasts.push({
-          kind: "error", title: "İndirilemedi", body: `${n.name ? n.name + ": " : ""}${n.error}`, ttl: 8000,
-          actions: n.tools ? [{ label: "Bileşenleri kur", primary: true, run: () => (store.modal = { type: "settings", tab: "bilesen" }) }] : [{ label: "Göster", run: () => { store.filter = "all"; store.select(n.id); store.detail = true; tick().then(() => scrollToId(n.id)); } }],
+          kind: "error", title: tr("İndirilemedi"), body: `${n.name ? n.name + ": " : ""}${tr(n.error)}`, ttl: 8000,
+          actions: n.tools ? [{ label: tr("Bileşenleri kur"), primary: true, run: () => (store.modal = { type: "settings", tab: "bilesen" }) }] : [{ label: tr("Göster"), run: () => { store.filter = "all"; store.select(n.id); store.detail = true; tick().then(() => scrollToId(n.id)); } }],
         });
         break;
+      case "extracted":
+        toasts.push({ kind: "ok", title: tr("Arşiv açıldı"), body: n.name, ttl: 6000, actions: [{ label: tr("Klasörü aç"), primary: true, run: () => call("open_folder", { path: n.path }) }] });
+        break;
       case "refreshed":
-        toasts.push({ kind: "ok", title: "Bağlantı yenilendi", body: `${n.name}: kaldığı yerden sürüyor`, ttl: 5000 });
+        toasts.push({ kind: "ok", title: tr("Bağlantı yenilendi"), body: tr("{name}: kaldığı yerden sürüyor", { name: n.name }), ttl: 5000 });
         break;
       case "clips": {
         if (store.modal) return;
@@ -130,8 +134,8 @@
           return { url: u, kind: kindOfExt(ext), name, ext, size: 0, mime: "", source: "pano", thumb: "", title: "", page: "" };
         });
         toasts.push({
-          kind: "clip", title: `Panoda ${urls.length} bağlantı var`, body: [...new Set(urls.map(host))].slice(0, 3).join(", "), ttl: 10000,
-          actions: [{ label: "Seç ve indir", primary: true, run: () => (store.modal = { type: "grab", data: { url: "", title: "Panodaki bağlantılar", icon: "", pages: 1, items } }) }],
+          kind: "clip", title: tr("Panoda {n} bağlantı var", { n: urls.length }), body: [...new Set(urls.map(host))].slice(0, 3).join(", "), ttl: 10000,
+          actions: [{ label: tr("Seç ve indir"), primary: true, run: () => (store.modal = { type: "grab", data: { url: "", title: tr("Panodaki bağlantılar"), icon: "", pages: 1, items } }) }],
         });
         break;
       }
@@ -139,15 +143,15 @@
         const show = () => { store.filter = "all"; store.select(n.id); store.detail = true; tick().then(() => scrollToId(n.id)); };
         const again = () => call("add", { p: { kind: "http", url: n.url, name: n.filename, headers: n.headers, page: n.page } });
         if (n.done)
-          toasts.push({ kind: "warn", title: "Bu dosya zaten indirildi", body: n.filename || host(n.url), ttl: 10000, actions: [{ label: "Aç", primary: true, run: () => call("open_task", { id: n.id }) }, { label: "Yeniden indir", run: again }] });
+          toasts.push({ kind: "warn", title: tr("Bu dosya zaten indirildi"), body: n.filename || host(n.url), ttl: 10000, actions: [{ label: tr("Aç"), primary: true, run: () => call("open_task", { id: n.id }) }, { label: tr("Yeniden indir"), run: again }] });
         else if (n.status === "paused" || n.status === "error")
-          toasts.push({ kind: "warn", title: "Bu indirme zaten listede", body: n.filename || host(n.url), ttl: 10000, actions: [{ label: "Sürdür", primary: true, run: () => call("resume", { id: n.id }) }, { label: "Göster", run: show }] });
-        else toasts.push({ kind: "ok", title: "Bu indirme zaten sürüyor", body: n.filename || host(n.url), actions: [{ label: "Göster", run: show }] });
+          toasts.push({ kind: "warn", title: tr("Bu indirme zaten listede"), body: n.filename || host(n.url), ttl: 10000, actions: [{ label: tr("Sürdür"), primary: true, run: () => call("resume", { id: n.id }) }, { label: tr("Göster"), run: show }] });
+        else toasts.push({ kind: "ok", title: tr("Bu indirme zaten sürüyor"), body: n.filename || host(n.url), actions: [{ label: tr("Göster"), run: show }] });
         break;
       }
       case "clip":
         if (store.modal) return;
-        toasts.push({ kind: "clip", title: "Panoda bağlantı var", body: n.url, ttl: 8000, actions: [{ label: "İndir", primary: true, run: () => openAdd(n.url) }] });
+        toasts.push({ kind: "clip", title: tr("Panoda bağlantı var"), body: n.url, ttl: 8000, actions: [{ label: tr("İndir"), primary: true, run: () => openAdd(n.url) }] });
         break;
       case "external":
         openAdd(n.url, n.headers);
@@ -156,21 +160,21 @@
         store.modal = { type: "grab", data: n.data };
         break;
       case "schedule":
-        toasts.push({ kind: "info", title: n.start ? "Zamanlayıcı indirmeleri başlattı" : "Zamanlayıcı indirmeleri duraklattı", ttl: 8000 });
+        toasts.push({ kind: "info", title: tr(n.start ? "Zamanlayıcı indirmeleri başlattı" : "Zamanlayıcı indirmeleri duraklattı"), ttl: 8000 });
         break;
       case "tools_installed":
-        toasts.push({ kind: "ok", title: "Bileşenler kuruldu", body: `${n.names.join(", ")} hazır, video ve ses indirmeleri çalışır`, ttl: 8000 });
+        toasts.push({ kind: "ok", title: tr("Bileşenler kuruldu"), body: tr("{names} hazır, video ve ses indirmeleri çalışır", { names: n.names.join(", ") }), ttl: 8000 });
         call("tools_status").then((x: any) => (store.tools = x)).catch(() => {});
         break;
       case "tools_updated":
-        toasts.push({ kind: "ok", title: `yt-dlp ${n.version} sürümüne güncellendi`, ttl: 6000 });
+        toasts.push({ kind: "ok", title: tr("yt-dlp {v} sürümüne güncellendi", { v: n.version }), ttl: 6000 });
         call("tools_status").then((x: any) => (store.tools = x)).catch(() => {});
         break;
       case "bridge":
-        toasts.push({ kind: "warn", title: "Eklenti köprüsü açılamadı", body: n.error, ttl: 20000 });
+        toasts.push({ kind: "warn", title: tr("Eklenti köprüsü açılamadı"), body: tr(n.error), ttl: 20000 });
         break;
       case "after_all":
-        toasts.push({ kind: "warn", title: n.action === "shutdown" ? "Bilgisayar 60 sn içinde kapanacak" : "Tüm indirmeler bitti", ttl: 60000, actions: n.action === "shutdown" ? [{ label: "İptal et", primary: true, run: () => call("cancel_shutdown") }] : [] });
+        toasts.push({ kind: "warn", title: tr(n.action === "shutdown" ? "Bilgisayar 60 sn içinde kapanacak" : "Tüm indirmeler bitti"), ttl: 60000, actions: n.action === "shutdown" ? [{ label: tr("İptal et"), primary: true, run: () => call("cancel_shutdown") }] : [] });
         break;
     }
   }
@@ -187,8 +191,8 @@
     if (s && !s.clipboard && !s.clipboard_asked) {
       store.saveSettings({ clipboard_asked: true });
       toasts.push({
-        kind: "info", title: "Kopyaladığınız bağlantıları otomatik algılayalım mı?", body: "Panoyu yalnızca bağlantı için izler, istediğiniz an kapatırsınız.", ttl: 12000,
-        actions: [{ label: "Aç", primary: true, run: () => store.saveSettings({ clipboard: true }) }, { label: "Hayır", run: () => {} }],
+        kind: "info", title: tr("Kopyaladığınız bağlantıları otomatik algılayalım mı?"), body: tr("Panoyu yalnızca bağlantı için izler, istediğiniz an kapatırsınız."), ttl: 12000,
+        actions: [{ label: tr("Aç"), primary: true, run: () => store.saveSettings({ clipboard: true }) }, { label: tr("Hayır"), run: () => {} }],
       });
     }
   }
@@ -226,7 +230,7 @@
       bulk(anyRun ? "pause" : "resume");
     } else if (e.key === "Enter") {
       const t = store.focused;
-      if (t?.status === "done") call("open_task", { id: t.id }).catch((x) => toasts.push({ kind: "error", title: "Açılamadı", body: String(x) }));
+      if (t?.status === "done") call("open_task", { id: t.id }).catch((x) => toasts.push({ kind: "error", title: tr("Açılamadı"), body: tr(String(x)) }));
       else store.detail = !store.detail;
     }
   }
@@ -288,37 +292,37 @@
       <form class="toolbar" onsubmit={submitOmni}>
         <label class="url">
           <Icon n="link" size={15} />
-          <input bind:value={omni} placeholder="Bağlantı yapıştırın: video, oynatma listesi, dosya ya da herhangi bir sayfa" spellcheck="false" autocomplete="off" aria-label="Bağlantı" />
-          <button type="button" class="icon-btn" aria-label="Panodan yapıştır" data-tip="Panodan yapıştır" onclick={async () => (omni = (await call("read_clipboard").catch(() => "")) || omni)}><Icon n="paste" size={15} /></button>
+          <input bind:value={omni} placeholder={tr("Bağlantı yapıştırın: video, oynatma listesi, dosya ya da herhangi bir sayfa")} spellcheck="false" autocomplete="off" aria-label={tr("Bağlantı")} />
+          <button type="button" class="icon-btn" aria-label={tr("Panodan yapıştır")} data-tip={tr("Panodan yapıştır")} onclick={async () => (omni = (await call("read_clipboard").catch(() => "")) || omni)}><Icon n="paste" size={15} /></button>
         </label>
-        <button type="submit" class="btn btn-primary" disabled={!omni.trim()}><Icon n="down" size={14} />İndir</button>
-        <button type="button" class="icon-btn" class:on={store.detail} aria-label="Ayrıntı panelini aç/kapat" aria-pressed={store.detail} data-tip="Ayrıntılar (Enter)" onclick={() => (store.detail = !store.detail)}><Icon n="panel" size={16} /></button>
+        <button type="submit" class="btn btn-primary" disabled={!omni.trim()}><Icon n="down" size={14} />{tr("İndir")}</button>
+        <button type="button" class="icon-btn" class:on={store.detail} aria-label={tr("Ayrıntı panelini aç/kapat")} aria-pressed={store.detail} data-tip={tr("Ayrıntılar (Enter)")} onclick={() => (store.detail = !store.detail)}><Icon n="panel" size={16} /></button>
       </form>
 
       {#if missingTools}
         <div class="notice">
           <Icon n="box" size={16} />
-          <p><b>Video siteleri için bileşenler kurulu değil.</b> yt-dlp, ffmpeg ve deno yaklaşık 150 MB; uygulama klasörüne kurulur.</p>
-          <button class="btn btn-sm" onclick={() => (store.modal = { type: "settings", tab: "bilesen" })}>Kur</button>
+          <p><b>{tr("Video siteleri için bileşenler kurulu değil.")}</b> {tr("yt-dlp, ffmpeg ve deno yaklaşık 150 MB; uygulama klasörüne kurulur.")}</p>
+          <button class="btn btn-sm" onclick={() => (store.modal = { type: "settings", tab: "bilesen" })}>{tr("Kur")}</button>
         </div>
       {/if}
 
       <div class="listhead">
         {#if selIds.length > 1}
           <div class="bulk">
-            <b class="num">{selIds.length} indirme seçildi</b>
-            <button class="btn btn-sm" onclick={() => bulk("resume")}><Icon n="play" size={13} />Sürdür</button>
-            <button class="btn btn-sm" onclick={() => bulk("pause")}><Icon n="pause" size={13} />Duraklat</button>
-            <button class="btn btn-sm" onclick={() => store.remove(selIds)}><Icon n="x" size={13} />Listeden kaldır</button>
-            <button class="btn btn-sm btn-danger" onclick={() => (store.modal = { type: "confirm-delete", ids: selIds })}><Icon n="trash" size={13} />Diskten sil</button>
-            <button class="btn btn-ghost btn-sm" onclick={() => store.clearSelection()}>Seçimi kaldır</button>
+            <b class="num">{tr("{n} indirme seçildi", { n: selIds.length })}</b>
+            <button class="btn btn-sm" onclick={() => bulk("resume")}><Icon n="play" size={13} />{tr("Sürdür")}</button>
+            <button class="btn btn-sm" onclick={() => bulk("pause")}><Icon n="pause" size={13} />{tr("Duraklat")}</button>
+            <button class="btn btn-sm" onclick={() => store.remove(selIds)}><Icon n="x" size={13} />{tr("Listeden kaldır")}</button>
+            <button class="btn btn-sm btn-danger" onclick={() => (store.modal = { type: "confirm-delete", ids: selIds })}><Icon n="trash" size={13} />{tr("Diskten sil")}</button>
+            <button class="btn btn-ghost btn-sm" onclick={() => store.clearSelection()}>{tr("Seçimi kaldır")}</button>
           </div>
         {:else}
           <h1>{title} <span class="num">{list.length}</span></h1>
           <div class="acts">
-            {#if anyPaused}<button class="btn btn-ghost btn-sm" onclick={() => call("resume_all")}><Icon n="play" size={13} />Tümünü sürdür</button>{/if}
-            {#if anyActive}<button class="btn btn-ghost btn-sm" onclick={() => call("pause_all")}><Icon n="pause" size={13} />Tümünü duraklat</button>{/if}
-            {#if anyDone}<button class="btn btn-ghost btn-sm" onclick={clearDone}><Icon n="check" size={13} />Bitenleri kaldır</button>{/if}
+            {#if anyPaused}<button class="btn btn-ghost btn-sm" onclick={() => call("resume_all")}><Icon n="play" size={13} />{tr("Tümünü sürdür")}</button>{/if}
+            {#if anyActive}<button class="btn btn-ghost btn-sm" onclick={() => call("pause_all")}><Icon n="pause" size={13} />{tr("Tümünü duraklat")}</button>{/if}
+            {#if anyDone}<button class="btn btn-ghost btn-sm" onclick={clearDone}><Icon n="check" size={13} />{tr("Bitenleri kaldır")}</button>{/if}
           </div>
         {/if}
       </div>
@@ -326,7 +330,7 @@
       <div class="workspace">
         <div class="table" role="grid" aria-multiselectable="true" aria-rowcount={list.length}>
           <div class="thead" role="row" class:gone={!store.tasks.length}>
-            <span></span><span bind:this={headName}>Ad</span><span>Durum</span><span>İlerleme</span><span class="r">Boyut</span><span class="r">Hız</span><span class="r">Kalan</span><span></span>
+            <span></span><span bind:this={headName}>{tr("Ad")}</span><span>{tr("Durum")}</span><span>{tr("İlerleme")}</span><span class="r">{tr("Boyut")}</span><span class="r">{tr("Hız")}</span><span class="r">{tr("Kalan")}</span><span></span>
           </div>
           <div class="tbody" class:scrolling bind:this={scroller} onscroll={(e) => { scrollTop = e.currentTarget.scrollTop; scrolling = true; clearTimeout(scrollT); scrollT = setTimeout(() => (scrolling = false), 160); }} onclick={(e) => { if (e.target === e.currentTarget) store.clearSelection(); }} role="presentation">
             {#if list.length}
@@ -340,22 +344,22 @@
               </div>
             {:else if store.query}
               <div class="empty small">
-                <b>“{store.query}” ile eşleşen indirme yok.</b>
-                <button class="btn btn-sm" onclick={() => (store.query = "")}>Aramayı temizle</button>
+                <b>{tr("“{q}” ile eşleşen indirme yok.", { q: store.query })}</b>
+                <button class="btn btn-sm" onclick={() => (store.query = "")}>{tr("Aramayı temizle")}</button>
               </div>
             {:else if store.filter !== "all" && store.tasks.length}
               <div class="empty small">
-                <b>Bu görünümde indirme yok.</b>
-                <button class="btn btn-sm" onclick={() => (store.filter = "all")}>Tümünü göster</button>
+                <b>{tr("Bu görünümde indirme yok.")}</b>
+                <button class="btn btn-sm" onclick={() => (store.filter = "all")}>{tr("Tümünü göster")}</button>
               </div>
             {:else}
               <div class="empty">
                 <div class="drop-hint">
-                  <h2>Başlamak için bir bağlantı bırakın</h2>
-                  <p>Bağlantıyı buraya sürükleyin ya da <kbd>Ctrl</kbd> <kbd>V</kbd> ile yapıştırın. Video, oynatma listesi, doğrudan dosya ya da içinde dosya olan herhangi bir sayfa olabilir.</p>
+                  <h2>{tr("Başlamak için bir bağlantı bırakın")}</h2>
+                  <p>{tr("Bağlantıyı buraya sürükleyin ya da")} <kbd>Ctrl</kbd> <kbd>V</kbd> {tr("ile yapıştırın. Video, oynatma listesi, doğrudan dosya ya da içinde dosya olan herhangi bir sayfa olabilir.")}</p>
                   <div class="row-btns">
-                    <button class="btn btn-primary btn-lg" onclick={() => openAdd()}><Icon n="plus" size={14} />Bağlantı ekle</button>
-                    <button class="btn btn-ghost btn-lg" onclick={() => (store.modal = { type: "ext" })}>Tarayıcı eklentisini kur</button>
+                    <button class="btn btn-primary btn-lg" onclick={() => openAdd()}><Icon n="plus" size={14} />{tr("Bağlantı ekle")}</button>
+                    <button class="btn btn-ghost btn-lg" onclick={() => (store.modal = { type: "ext" })}>{tr("Tarayıcı eklentisini kur")}</button>
                   </div>
                 </div>
               </div>
@@ -376,7 +380,7 @@
 
 {#if dragging}
   <div class="drop" transition:fade={{ duration: 120 }} ondragleave={(e) => { if (!e.relatedTarget) dragging = false; }} role="presentation">
-    <div class="dbox"><Icon n="down" size={24} /><b>Bırakın, çözümleyelim</b></div>
+    <div class="dbox"><Icon n="down" size={24} /><b>{tr("Bırakın, çözümleyelim")}</b></div>
   </div>
 {/if}
 
@@ -385,25 +389,25 @@
   {@const many = store.selected.size > 1}
   <div class="ctx" role="menu" style="left:{Math.min(store.ctx.x, innerWidth - 232)}px;top:{Math.min(store.ctx.y, innerHeight - 330)}px" out:fade={{ duration: 100 }}>
     {#if many}
-      <div class="ctx-h num">{store.selected.size} indirme</div>
-      <button role="menuitem" onclick={() => ctxRun(() => bulk("resume"))}><Icon n="play" size={14} />Sürdür</button>
-      <button role="menuitem" onclick={() => ctxRun(() => bulk("pause"))}><Icon n="pause" size={14} />Duraklat</button>
+      <div class="ctx-h num">{tr("{n} indirme", { n: store.selected.size })}</div>
+      <button role="menuitem" onclick={() => ctxRun(() => bulk("resume"))}><Icon n="play" size={14} />{tr("Sürdür")}</button>
+      <button role="menuitem" onclick={() => ctxRun(() => bulk("pause"))}><Icon n="pause" size={14} />{tr("Duraklat")}</button>
       <hr />
-      <button role="menuitem" onclick={() => ctxRun(() => store.remove(selIds))}><Icon n="x" size={14} />Listeden kaldır<kbd>Del</kbd></button>
-      <button role="menuitem" class="danger" onclick={() => ctxRun(() => (store.modal = { type: "confirm-delete", ids: selIds }))}><Icon n="trash" size={14} />Diskten sil<kbd>Shift Del</kbd></button>
+      <button role="menuitem" onclick={() => ctxRun(() => store.remove(selIds))}><Icon n="x" size={14} />{tr("Listeden kaldır")}<kbd>Del</kbd></button>
+      <button role="menuitem" class="danger" onclick={() => ctxRun(() => (store.modal = { type: "confirm-delete", ids: selIds }))}><Icon n="trash" size={14} />{tr("Diskten sil")}<kbd>Shift Del</kbd></button>
     {:else}
-      {#if t.status === "done"}<button role="menuitem" onclick={() => ctxRun(() => call("open_task", { id: t.id }))}><Icon n="external" size={14} />Aç<kbd>Enter</kbd></button>{/if}
-      <button role="menuitem" onclick={() => ctxRun(() => call("reveal_task", { id: t.id }))}><Icon n="folder" size={14} />Klasörde göster</button>
-      {#if ACTIVE.has(t.status) && t.status !== "processing"}<button role="menuitem" onclick={() => ctxRun(() => call("pause", { id: t.id }))}><Icon n="pause" size={14} />Duraklat<kbd>Boşluk</kbd></button>{/if}
-      {#if ["paused", "error"].includes(t.status)}<button role="menuitem" onclick={() => ctxRun(() => call("resume", { id: t.id }))}><Icon n="play" size={14} />Sürdür<kbd>Boşluk</kbd></button>{/if}
-      {#if t.status === "queued" || t.status === "paused"}<button role="menuitem" onclick={() => ctxRun(() => call("start_now", { id: t.id }))}><Icon n="bolt" size={14} />Hemen başlat</button>{/if}
-      {#if !ACTIVE.has(t.status) && t.status !== "done"}<button role="menuitem" onclick={() => ctxRun(() => (store.modal = { type: "update-url", id: t.id }))}><Icon n="link" size={14} />Bağlantıyı güncelle</button>{/if}
-      <button role="menuitem" onclick={() => ctxRun(() => call("write_clipboard", { text: t.url }))}><Icon n="copy" size={14} />Bağlantıyı kopyala</button>
-      <button role="menuitem" onclick={() => ctxRun(() => call("move_task", { id: t.id, to: 0 }))}><Icon n="top" size={14} />En üste taşı</button>
-      {#if !ACTIVE.has(t.status)}<button role="menuitem" onclick={() => ctxRun(() => call("restart", { id: t.id }))}><Icon n="retry" size={14} />Baştan indir</button>{/if}
+      {#if t.status === "done"}<button role="menuitem" onclick={() => ctxRun(() => call("open_task", { id: t.id }))}><Icon n="external" size={14} />{tr("Aç")}<kbd>Enter</kbd></button>{/if}
+      <button role="menuitem" onclick={() => ctxRun(() => call("reveal_task", { id: t.id }))}><Icon n="folder" size={14} />{tr("Klasörde göster")}</button>
+      {#if ACTIVE.has(t.status) && t.status !== "processing"}<button role="menuitem" onclick={() => ctxRun(() => call("pause", { id: t.id }))}><Icon n="pause" size={14} />{tr("Duraklat")}<kbd>{tr("Boşluk")}</kbd></button>{/if}
+      {#if ["paused", "error"].includes(t.status)}<button role="menuitem" onclick={() => ctxRun(() => call("resume", { id: t.id }))}><Icon n="play" size={14} />{tr("Sürdür")}<kbd>{tr("Boşluk")}</kbd></button>{/if}
+      {#if t.status === "queued" || t.status === "paused"}<button role="menuitem" onclick={() => ctxRun(() => call("start_now", { id: t.id }))}><Icon n="bolt" size={14} />{tr("Hemen başlat")}</button>{/if}
+      {#if !ACTIVE.has(t.status) && t.status !== "done"}<button role="menuitem" onclick={() => ctxRun(() => (store.modal = { type: "update-url", id: t.id }))}><Icon n="link" size={14} />{tr("Bağlantıyı güncelle")}</button>{/if}
+      <button role="menuitem" onclick={() => ctxRun(() => call("write_clipboard", { text: t.url }))}><Icon n="copy" size={14} />{tr("Bağlantıyı kopyala")}</button>
+      <button role="menuitem" onclick={() => ctxRun(() => call("move_task", { id: t.id, to: 0 }))}><Icon n="top" size={14} />{tr("En üste taşı")}</button>
+      {#if !ACTIVE.has(t.status)}<button role="menuitem" onclick={() => ctxRun(() => call("restart", { id: t.id }))}><Icon n="retry" size={14} />{tr("Baştan indir")}</button>{/if}
       <hr />
-      <button role="menuitem" onclick={() => ctxRun(() => store.remove([t.id]))}><Icon n="x" size={14} />Listeden kaldır<kbd>Del</kbd></button>
-      {#if t.path}<button role="menuitem" class="danger" onclick={() => ctxRun(() => (store.modal = { type: "confirm-delete", ids: [t.id] }))}><Icon n="trash" size={14} />Diskten sil<kbd>Shift Del</kbd></button>{/if}
+      <button role="menuitem" onclick={() => ctxRun(() => store.remove([t.id]))}><Icon n="x" size={14} />{tr("Listeden kaldır")}<kbd>Del</kbd></button>
+      {#if t.path}<button role="menuitem" class="danger" onclick={() => ctxRun(() => (store.modal = { type: "confirm-delete", ids: [t.id] }))}><Icon n="trash" size={14} />{tr("Diskten sil")}<kbd>Shift Del</kbd></button>{/if}
     {/if}
   </div>
 {/if}
@@ -421,25 +425,25 @@
       <ExtDialog onclose={() => (store.modal = null)} />
     {:else if md.type === "confirm-delete"}
       <div class="dialog" role="alertdialog" aria-labelledby="del-t">
-        <h2 id="del-t">{delInfo.n === 1 ? "Dosya diskten silinsin mi?" : `${delInfo.n} dosya diskten silinsin mi?`}</h2>
-        <p>{delInfo.size ? `${bytes(delInfo.size)} yer açılacak. ` : ""}Dosyalar Geri Dönüşüm Kutusu'na taşınır, oradan geri alabilirsiniz.</p>
+        <h2 id="del-t">{delInfo.n === 1 ? tr("Dosya diskten silinsin mi?") : tr("{n} dosya diskten silinsin mi?", { n: delInfo.n })}</h2>
+        <p>{delInfo.size ? tr("{size} yer açılacak.", { size: bytes(delInfo.size) }) + " " : ""}{tr("Dosyalar Geri Dönüşüm Kutusu'na taşınır, oradan geri alabilirsiniz.")}</p>
         <div class="dfoot">
-          <button class="btn" onclick={() => (store.modal = null)}>Vazgeç</button>
-          <button class="btn btn-primary danger-fill" onclick={() => confirmDelete(md.ids)}>Dosyaları sil</button>
+          <button class="btn" onclick={() => (store.modal = null)}>{tr("Vazgeç")}</button>
+          <button class="btn btn-primary danger-fill" onclick={() => confirmDelete(md.ids)}>{tr("Dosyaları sil")}</button>
         </div>
       </div>
     {:else if md.type === "update-url"}
       {@const t = store.tasks.find((x) => x.id === md.id)}
       <form class="dialog" onsubmit={(e) => { e.preventDefault(); updateUrl(md.id); }}>
-        <h2>Bağlantıyı güncelle</h2>
-        <p>Süresi dolan bağlantının yerine yenisini yapıştırın. Aynı dosyaysa inen {t ? bytes(t.done) : ""} korunur ve kaldığı yerden sürer.</p>
+        <h2>{tr("Bağlantıyı güncelle")}</h2>
+        <p>{tr("Süresi dolan bağlantının yerine yenisini yapıştırın. Aynı dosyaysa inen {size} korunur ve kaldığı yerden sürer.", { size: t ? bytes(t.done) : "" })}</p>
         <p class="src mono ellip">{t ? host(t.url) : ""} · {t?.name}</p>
         <!-- svelte-ignore a11y_autofocus -->
-        <input class="field mono" bind:value={newUrl} placeholder="https://" autofocus spellcheck="false" aria-label="Yeni bağlantı" />
+        <input class="field mono" bind:value={newUrl} placeholder="https://" autofocus spellcheck="false" aria-label={tr("Yeni bağlantı")} />
         {#if urlErr}<p class="ferr" role="alert">{urlErr}</p>{/if}
         <div class="dfoot">
-          <button type="button" class="btn" onclick={() => (store.modal = null)}>Vazgeç</button>
-          <button type="submit" class="btn btn-primary" disabled={!newUrl.trim() || urlBusy}>{#if urlBusy}<span class="spinner"></span>{/if}Güncelle ve sürdür</button>
+          <button type="button" class="btn" onclick={() => (store.modal = null)}>{tr("Vazgeç")}</button>
+          <button type="submit" class="btn btn-primary" disabled={!newUrl.trim() || urlBusy}>{#if urlBusy}<span class="spinner"></span>{/if}{tr("Güncelle ve sürdür")}</button>
         </div>
       </form>
     {/if}

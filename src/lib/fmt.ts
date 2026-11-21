@@ -1,6 +1,8 @@
-// Türkçe sayı ve süre biçimleri
-const nf1 = new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-const nf0 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 });
+import { t, locale } from "./i18n.svelte";
+
+// sayı ve süre biçimleri
+const nfs: Record<string, Intl.NumberFormat[]> = {};
+const nf = (i: 0 | 1) => (nfs[locale()] ??= [0, 1].map((d) => new Intl.NumberFormat(locale(), { minimumFractionDigits: d, maximumFractionDigits: d })))[i];
 const U = ["B", "KB", "MB", "GB", "TB"];
 
 /** B ve KB tam sayı, MB ve üstü tek ondalık */
@@ -8,7 +10,7 @@ export function bytes(n: number): string {
   if (!n || n < 0) return "0 B";
   let i = 0;
   while (n >= 1024 && i < U.length - 1) { n /= 1024; i++; }
-  return `${i < 2 ? nf0.format(n) : nf1.format(n)} ${U[i]}`;
+  return `${nf(i < 2 ? 0 : 1).format(n)} ${U[i]}`;
 }
 /** [değer, birim], birim soluk gösterilsin diye ayrı */
 export function bytesParts(n: number): [string, string] {
@@ -16,18 +18,18 @@ export function bytesParts(n: number): [string, string] {
   const k = s.lastIndexOf(" ");
   return [s.slice(0, k), s.slice(k + 1)];
 }
-export const speed = (n: number) => (n > 0 ? `${bytes(n)}/sn` : "");
+export const speed = (n: number) => (n > 0 ? t("{v}/sn", { v: bytes(n) }) : "");
 
 /** kalan süre. 10 sn altı "Birkaç saniye", 1 dk altı 5 sn'ye yuvarla, 1 sa altı dakikayı yukarı yuvarla, sonrası en çok iki birim. -1 hesaplanıyor, -2 bekleniyor */
 export function eta(s: number): string {
-  if (s === -2) return "Bekleniyor";
+  if (s === -2) return t("Bekleniyor");
   if (s < 0 || !isFinite(s)) return "";
-  if (s < 10) return "Birkaç saniye";
-  if (s < 60) return `${Math.max(10, Math.round(s / 5) * 5)} sn`;
-  if (s < 3600) return `${Math.ceil(s / 60)} dk`;
+  if (s < 10) return t("Birkaç saniye");
+  if (s < 60) return t("{n} sn", { n: Math.max(10, Math.round(s / 5) * 5) });
+  if (s < 3600) return t("{n} dk", { n: Math.ceil(s / 60) });
   const h = Math.floor(s / 3600), m = Math.ceil((s % 3600) / 60);
-  if (h >= 48) return `${Math.round(h / 24)} gün`;
-  return m === 60 ? `${h + 1} sa` : m ? `${h} sa ${m} dk` : `${h} sa`;
+  if (h >= 48) return t("{n} gün", { n: Math.round(h / 24) });
+  return m === 60 ? t("{h} sa", { h: h + 1 }) : m ? t("{h} sa {m} dk", { h, m }) : t("{h} sa", { h });
 }
 export function dur(s: number): string {
   if (!s) return "";
@@ -39,18 +41,20 @@ const MONTHS = ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl",
 export function ago(ts: number): string {
   if (!ts) return "";
   const d = Date.now() / 1000 - ts;
-  if (d < 60) return "Az önce";
-  if (d < 3600) return `${Math.floor(d / 60)} dk önce`;
-  if (d < 86400) return `${Math.floor(d / 3600)} sa önce`;
+  if (d < 60) return t("Az önce");
+  if (d < 3600) return t("{n} dk önce", { n: Math.floor(d / 60) });
+  if (d < 86400) return t("{n} sa önce", { n: Math.floor(d / 3600) });
   const dt = new Date(ts * 1000);
-  if (d < 86400 * 2) return `Dün ${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
-  return `${dt.getDate()} ${MONTHS[dt.getMonth()]}${dt.getFullYear() !== new Date().getFullYear() ? " " + dt.getFullYear() : ""}`;
+  if (d < 86400 * 2) return t("Dün {time}", { time: `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}` });
+  const other = dt.getFullYear() !== new Date().getFullYear();
+  if (locale() !== "tr-TR") return dt.toLocaleDateString(locale(), { month: "short", day: "numeric", year: other ? "numeric" : undefined });
+  return `${dt.getDate()} ${MONTHS[dt.getMonth()]}${other ? " " + dt.getFullYear() : ""}`;
 }
 export function absTime(ts: number): string {
-  return ts ? new Date(ts * 1000).toLocaleString("tr-TR", { dateStyle: "long", timeStyle: "short" }) : "";
+  return ts ? new Date(ts * 1000).toLocaleString(locale(), { dateStyle: "long", timeStyle: "short" }) : "";
 }
 export function compact(n: number): string {
-  return new Intl.NumberFormat("tr-TR", { notation: "compact", maximumFractionDigits: 1 }).format(n);
+  return new Intl.NumberFormat(locale(), { notation: "compact", maximumFractionDigits: 1 }).format(n);
 }
 /** sayfa seçicideki tür, rust tarafındaki scrape::kind_of_ext ile aynı kalmalı */
 export function kindOfExt(e: string): string {
@@ -108,4 +112,25 @@ export function middle(name: string, px: number, font = "500 13px 'Mona Sans Var
   if (cache.size > 4000) cache.clear();
   cache.set(key, out);
   return out;
+}
+
+/** "dosya[001-100].jpg" aralığını ve yan yana yapıştırılmış adresleri açar */
+export function expandBatch(s: string, max = 5000): string[] {
+  const out: string[] = [];
+  // input kutusu satır sonlarını siliyor, adresler birbirine yapışık gelebilir
+  const parts = s.trim().split(/\s+|(?=https?:\/\/)/i).filter((u) => /^https?:\/\//i.test(u));
+  for (const u of parts) {
+    const m = u.match(/\[(\d+)-(\d+)\]|\[([a-z])-([a-z])\]/i);
+    if (!m) { out.push(u); continue; }
+    const pre = u.slice(0, m.index!), post = u.slice(m.index! + m[0].length);
+    const num = m[1] !== undefined;
+    const a = num ? +m[1] : m[3].charCodeAt(0), b = num ? +m[2] : m[4].charCodeAt(0);
+    const pad = num && m[1].length > 1 && m[1].startsWith("0") ? m[1].length : 0;
+    const dir = a <= b ? 1 : -1;
+    for (let i = a; dir > 0 ? i <= b : i >= b; i += dir) {
+      if (out.length >= max) return out;
+      out.push(pre + (num ? String(i).padStart(pad, "0") : String.fromCharCode(i)) + post);
+    }
+  }
+  return out.slice(0, max);
 }

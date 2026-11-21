@@ -3,13 +3,14 @@
   import Icon from "./Icon.svelte";
   import { call, inTauri } from "../lib/api";
   import { toasts } from "../lib/store.svelte";
+  import { t as tr } from "../lib/i18n.svelte";
   let { onclose }: { onclose: () => void } = $props();
   let path = $state("");
   // eklenti her ping'de sürüm ve tarayıcı bilgisini yolluyor, 2 sn'de bir bak
   let st = $state<{ ago: number; version: string; browser: string; bridge_error?: string } | null>(null);
   const NAMES: Record<string, string> = { chrome: "Chrome", edge: "Edge", brave: "Brave", opera: "Opera", vivaldi: "Vivaldi", firefox: "Firefox" };
   const live = $derived(!!st && st.ago >= 0 && st.ago < 120);
-  const ago = (s: number) => (s < 10 ? "az önce" : s < 60 ? `${s} sn önce` : `${Math.round(s / 60)} dk önce`);
+  const ago = (s: number) => (s < 10 ? tr("az önce") : s < 60 ? tr("{n} sn önce", { n: s }) : tr("{n} dk önce", { n: Math.round(s / 60) }));
   onMount(() => {
     const tick = async () => (st = await call("ext_status").catch(() => null));
     tick();
@@ -26,30 +27,30 @@
 
 <div class="ex">
   <header>
-    <div><h2>Tarayıcı eklentisi</h2><p>Sayfada çalan videoyu ve sesi yakalar, tarayıcıdaki indirmeleri Trawl'a devreder.</p></div>
-    <button class="icon-btn" aria-label="Kapat" onclick={onclose}><Icon n="x" /></button>
+    <div><h2>{tr("Tarayıcı eklentisi")}</h2><p>{tr("Sayfada çalan videoyu ve sesi yakalar, tarayıcıdaki indirmeleri Trawl'a devreder.")}</p></div>
+    <button class="icon-btn" aria-label={tr("Kapat")} onclick={onclose}><Icon n="x" /></button>
   </header>
   <div class="st" class:on={live} role="status">
     <i></i>
     {#if st?.bridge_error}
-      <span><b>Köprü kapalı</b> · {st.bridge_error}</span>
+      <span><b>{tr("Köprü kapalı")}</b> · {tr(st.bridge_error)}</span>
     {:else if live && st}
-      <span><b>Bağlı</b> · {NAMES[st.browser] || st.browser} · eklenti {st.version} · {ago(st.ago)}</span>
+      <span><b>{tr("Bağlı")}</b> · {NAMES[st.browser] || st.browser} · {tr("eklenti {v}", { v: st.version })} · {ago(st.ago)}</span>
     {:else if st && st.ago >= 0}
-      <span><b>Bağlantı yok</b> · son görülme {ago(st.ago)}. Tarayıcı açıksa eklentiyi yeniden yükleyin.</span>
+      <span><b>{tr("Bağlantı yok")}</b> · {tr("son görülme {ago}. Tarayıcı açıksa eklentiyi yeniden yükleyin.", { ago: ago(st.ago) })}</span>
     {:else}
-      <span><b>Henüz bağlanmadı</b> · aşağıdaki adımlarla kurun.</span>
+      <span><b>{tr("Henüz bağlanmadı")}</b> · {tr("aşağıdaki adımlarla kurun.")}</span>
     {/if}
   </div>
   <ol>
     {#each steps as [t, d], i}
-      <li><span class="n num">{i + 1}</span><div><b>{t}</b><small>{d}</small></div></li>
+      <li><span class="n num">{i + 1}</span><div><b>{tr(t)}</b><small>{tr(d)}</small></div></li>
     {/each}
   </ol>
   <footer>
-    <span class="mono ellip path">{path || "Bağlantı noktası 127.0.0.1:47321"}</span>
-    <button class="btn" onclick={() => { call("write_clipboard", { text: "chrome://extensions" }); toasts.push({ kind: "ok", title: "Adres kopyalandı", ttl: 1500 }); }}><Icon n="copy" size={14} />Adresi kopyala</button>
-    <button class="btn btn-primary" disabled={!inTauri} onclick={async () => (path = await call("ext_folder"))}><Icon n="folder" size={14} />Klasörü aç</button>
+    <span class="mono ellip path">{path || tr("Bağlantı noktası 127.0.0.1:47321")}</span>
+    <button class="btn" onclick={() => { call("write_clipboard", { text: "chrome://extensions" }); toasts.push({ kind: "ok", title: tr("Adres kopyalandı"), ttl: 1500 }); }}><Icon n="copy" size={14} />{tr("Adresi kopyala")}</button>
+    <button class="btn btn-primary" disabled={!inTauri} onclick={async () => (path = await call("ext_folder"))}><Icon n="folder" size={14} />{tr("Klasörü aç")}</button>
   </footer>
 </div>
 

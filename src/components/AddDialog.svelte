@@ -4,14 +4,15 @@
   import Grabber from "./Grabber.svelte";
   import { call, inTauri } from "../lib/api";
   import { store, toasts, CATS } from "../lib/store.svelte";
-  import { bytes, dur, compact, host, qlabel, ago } from "../lib/fmt";
+  import { bytes, dur, compact, host, qlabel, ago, expandBatch } from "../lib/fmt";
+  import { t } from "../lib/i18n.svelte";
 
   let { url = "", headers = {}, onclose }: { url?: string; headers?: Record<string, string>; onclose: () => void } = $props();
 
   // svelte-ignore state_referenced_locally
   let input = $state(url);
   // svelte-ignore state_referenced_locally
-  let phase = $state<"input" | "loading" | "media" | "playlist" | "http" | "page" | "error">(url ? "loading" : "input");
+  let phase = $state<"input" | "loading" | "media" | "playlist" | "http" | "page" | "batch" | "error">(url ? "loading" : "input");
   let res = $state<any>(null);
   let err = $state("");
   let toolsErr = $state(false);
@@ -35,6 +36,7 @@
   let name = $state("");
   let conns = $state(s?.connections || 8);
   let picked = $state<Set<number>>(new Set());
+  let batch = $state<string[]>([]);
 
   const AUD = [
     { c: "mp3", d: "Her yerde çalar" },
@@ -45,17 +47,21 @@
   const lossless = $derived(codec === "flac" || codec === "wav");
   const m = $derived(res?.media);
   const pageCount = $derived(res?.page?.items?.length || 0);
-  const TITLES: Record<string, string> = { input: "Bağlantı ekle", loading: "Çözümleniyor", media: "İndirme seçenekleri", playlist: "Oynatma listesi", http: "Dosya", page: "Sayfadan topla", error: "Çözümlenemedi" };
+  const TITLES: Record<string, string> = { input: "Bağlantı ekle", loading: "Çözümleniyor", media: "İndirme seçenekleri", playlist: "Oynatma listesi", http: "Dosya", page: "Sayfadan topla", batch: "Toplu ekle", error: "Çözümlenemedi" };
   // aynı bağlantı listede zaten var mı
   const dup = $derived.by(() => {
     const u = (m?.url || res?.http?.url || input).trim();
     return u ? store.tasks.find((t) => t.url === u || t.page === u) : undefined;
   });
 
+  // cümle ortasında küçük harf, ama ingilizce ay adı büyük kalsın
+  const agoLow = (ts: number) => { const x = ago(ts); return /^[A-Z][a-z]{2} \d/.test(x) ? x : x.toLocaleLowerCase(store.settings?.lang === "en" ? "en" : "tr"); };
   async function analyze(u = input) {
     u = u.trim();
     if (!u) return;
     input = u;
+    const list = expandBatch(u);
+    if (list.length > 1) { batch = list; phase = "batch"; return; }
     phase = "loading"; err = ""; toolsErr = false; step = 0;
     const iv = setInterval(() => (step = Math.min(STEPS.length - 1, step + 1)), 900);
     try {
@@ -97,9 +103,12 @@
       const entries = m.entries.filter((_: any, i: number) => picked.has(i));
       if (!entries.length) return;
       await call("add", { p: { kind: "media", url: m.url, folder, headers, opts: opts(), start, entries } });
-      toasts.push({ kind: "ok", title: `${entries.length} video sıraya eklendi` });
+      toasts.push({ kind: "ok", title: t("{n} video sıraya eklendi", { n: entries.length }) });
     } else if (phase === "http") {
       await call("add", { p: { kind: "http", url: res.http.url, name, folder, headers, conns, start } });
+    } else if (phase === "batch") {
+      const n = await call("add_many", { list: batch.map((url) => ({ kind: "http", url, folder, headers, conns, start })) });
+      toasts.push({ kind: "ok", title: t("{n} indirme sıraya eklendi", { n: n ?? batch.length }) });
     }
     onclose();
   }
@@ -144,40 +153,41 @@
 <div class="dlg">
   <header>
     <div class="ht">
-      <h2>{TITLES[phase]}</h2>
+      <h2>{t(TITLES[phase])}</h2>
       {#if phase !== "input"}<p class="mono ellip">{host(input) || input}</p>{/if}
     </div>
-    <button class="icon-btn" aria-label="Kapat" onclick={onclose}><Icon n="x" /></button>
+    <button class="icon-btn" aria-label={t("Kapat")} onclick={onclose}><Icon n="x" /></button>
   </header>
 
   {#if phase === "input" || phase === "error"}
     <form class="body" onsubmit={(e) => { e.preventDefault(); analyze(); }}>
       <label class="url">
-        <input bind:this={inputEl} bind:value={input} class="field mono" placeholder="https://" spellcheck="false" aria-label="Bağlantı" />
+        <input bind:this={inputEl} bind:value={input} class="field mono" placeholder="https://" spellcheck="false" aria-label={t("Bağlantı")} />
       </label>
       {#if phase === "error"}
         <div class="alert" role="alert">
           <Icon n="warn" size={16} filled />
           <div>
-            <b>{toolsErr ? "Video siteleri için bileşenler eksik" : "Bu bağlantı çözümlenemedi"}</b>
-            <p>{toolsErr ? "yt-dlp, ffmpeg ve deno gerekiyor (yaklaşık 150 MB). Uygulama klasörüne kurulur, sistemine dokunmaz." : err}</p>
+            <b>{t(toolsErr ? "Video siteleri için bileşenler eksik" : "Bu bağlantı çözümlenemedi")}</b>
+            <p>{t(toolsErr ? "yt-dlp, ffmpeg ve deno gerekiyor (yaklaşık 150 MB). Uygulama klasörüne kurulur, sistemine dokunmaz." : err)}</p>
           </div>
-          {#if toolsErr}<button type="button" class="btn btn-sm" onclick={install} disabled={installing}>{#if installing}<span class="spinner"></span>Kuruluyor{:else}Şimdi kur{/if}</button>{/if}
+          {#if toolsErr}<button type="button" class="btn btn-sm" onclick={install} disabled={installing}>{#if installing}<span class="spinner"></span>{t("Kuruluyor")}{:else}{t("Şimdi kur")}{/if}</button>{/if}
         </div>
       {/if}
       <ul class="hints">
-        <li><Icon n="video" size={14} />Video siteleri: YouTube, Vimeo, X, Twitch ve 1800'den fazlası</li>
-        <li><Icon n="list" size={14} />Oynatma listeleri: videoları tek tek seçersiniz</li>
-        <li><Icon n="radar" size={14} />Sıradan bir sayfa: içindeki dosyaların hepsini bulur</li>
+        <li><Icon n="video" size={14} />{t("Video siteleri: YouTube, Vimeo, X, Twitch ve 1800'den fazlası")}</li>
+        <li><Icon n="list" size={14} />{t("Oynatma listeleri: videoları tek tek seçersiniz")}</li>
+        <li><Icon n="radar" size={14} />{t("Sıradan bir sayfa: içindeki dosyaların hepsini bulur")}</li>
+        <li><Icon n="down" size={14} />{t("Toplu:")} <span class="mono">{t("resim[001-120].jpg")}</span> {t("gibi aralık ya da art arda birden çok adres")}</li>
       </ul>
-      <footer><span></span><button class="btn btn-primary btn-lg" type="submit" disabled={!input.trim()}>Çözümle</button></footer>
+      <footer><span></span><button class="btn btn-primary btn-lg" type="submit" disabled={!input.trim()}>{t("Çözümle")}</button></footer>
     </form>
   {:else if phase === "loading"}
     <div class="body loading" aria-live="polite">
       <ol>
         {#each STEPS as l, i}
           <li class:done={i < step} class:cur={i === step}>
-            {#if i < step}<Icon n="check" size={14} />{:else if i === step}<span class="spinner"></span>{:else}<i></i>{/if}{l}
+            {#if i < step}<Icon n="check" size={14} />{:else if i === step}<span class="spinner"></span>{:else}<i></i>{/if}{t(l)}
           </li>
         {/each}
       </ol>
@@ -188,48 +198,48 @@
         {#if m.thumb}<img src={m.thumb} alt="" referrerpolicy="no-referrer" />{/if}
         <div class="mi">
           <h3>{m.title}</h3>
-          <p class="num">{[m.uploader, m.duration ? dur(m.duration) : "", phase === "playlist" ? `${m.entries.length} video` : "", m.views ? `${compact(m.views)} izlenme` : ""].filter(Boolean).join(" · ")}</p>
-          {#if pageCount > 1 && phase === "media"}<button class="link" onclick={openGrabber}>Sayfada {pageCount} öğe daha var, hepsini listele</button>{/if}
+          <p class="num">{[m.uploader, m.duration ? dur(m.duration) : "", phase === "playlist" ? t("{n} video", { n: m.entries.length }) : "", m.views ? t("{n} izlenme", { n: compact(m.views) }) : ""].filter(Boolean).join(" · ")}</p>
+          {#if pageCount > 1 && phase === "media"}<button class="link" onclick={openGrabber}>{t("Sayfada {n} öğe daha var, hepsini listele", { n: pageCount })}</button>{/if}
         </div>
       </div>
 
       {#if dup}
-        <div class="note"><Icon n="info" size={15} /><span>Bu bağlantı listede var{dup.status === "done" ? `, ${ago(dup.finished).toLocaleLowerCase("tr")} indirildi` : ""}.</span>{#if dup.status === "done"}<button class="btn btn-sm" onclick={() => { call("open_task", { id: dup.id }); onclose(); }}>Var olanı aç</button>{/if}</div>
+        <div class="note"><Icon n="info" size={15} /><span>{dup.status === "done" ? t("Bu bağlantı listede var, {when} indirildi.", { when: agoLow(dup.finished) }) : t("Bu bağlantı listede var.")}</span>{#if dup.status === "done"}<button class="btn btn-sm" onclick={() => { call("open_task", { id: dup.id }); onclose(); }}>{t("Var olanı aç")}</button>{/if}</div>
       {/if}
 
       <div class="seg" role="tablist">
         <button role="tab" aria-selected={mode === "video"} class:on={mode === "video"} disabled={phase === "media" && !m.has_video} onclick={() => (mode = "video")}><Icon n="video" size={14} />Video</button>
-        <button role="tab" aria-selected={mode === "audio"} class:on={mode === "audio"} onclick={() => (mode = "audio")}><Icon n="music" size={14} />Yalnızca ses</button>
+        <button role="tab" aria-selected={mode === "audio"} class:on={mode === "audio"} onclick={() => (mode = "audio")}><Icon n="music" size={14} />{t("Yalnızca ses")}</button>
       </div>
 
       {#if mode === "video"}
         <section>
-          <span class="label">Kalite</span>
-          <div class="qlist" role="radiogroup" aria-label="Kalite">
+          <span class="label">{t("Kalite")}</span>
+          <div class="qlist" role="radiogroup" aria-label={t("Kalite")}>
             {#each phase === "playlist" ? [2160, 1440, 1080, 720, 480].map((h) => ({ height: h, size: 0, fps: 0, hdr: false })) : more || QUICK.length < 2 ? m.videos : QUICK as v (v.height + (v.label || ""))}
               <button class="q" role="radio" aria-checked={height === v.height} class:on={height === v.height} onclick={() => (height = v.height)}>
                 <i class="radio"></i>
-                <b class="num">{v.label === "En iyi" ? "En iyi" : `${v.height}p`}</b>
+                <b class="num">{v.label === "En iyi" ? t("En iyi") : `${v.height}p`}</b>
                 <span class="dim">{v.label === "En iyi" ? `${v.height}p · ${qlabel(v.height)}` : qlabel(v.height)}{v.fps > 30 ? ` · ${v.fps} fps` : ""}{v.hdr ? " · HDR" : ""}</span>
-                <span class="sz num">{v.size ? `~${bytes(v.size)}` : phase === "playlist" ? "en fazla" : ""}</span>
+                <span class="sz num">{v.size ? `~${bytes(v.size)}` : phase === "playlist" ? t("en fazla") : ""}</span>
               </button>
             {/each}
           </div>
           {#if phase === "media" && QUICK.length >= 2 && m.videos.length > QUICK.length}
-            <button class="link" onclick={() => (more = !more)}>{more ? "Daha az seçenek" : `Bütün kaliteler (${m.videos.length})`}</button>
+            <button class="link" onclick={() => (more = !more)}>{more ? t("Daha az seçenek") : t("Bütün kaliteler ({n})", { n: m.videos.length })}</button>
           {/if}
-          {#if height > 1080 && container === "mp4"}<p class="hint"><Icon n="info" size={13} />{height}p genelde yalnızca VP9/AV1 olarak gelir; bazı eski oynatıcılar açamayabilir. Garanti uyumluluk için 1080p seçin.</p>{/if}
+          {#if height > 1080 && container === "mp4"}<p class="hint"><Icon n="info" size={13} />{t("{h}p genelde yalnızca VP9/AV1 olarak gelir; bazı eski oynatıcılar açamayabilir. Garanti uyumluluk için 1080p seçin.", { h: height })}</p>{/if}
         </section>
         <details bind:open={adv}>
-          <summary>Ayrıntılı seçenekler</summary>
+          <summary>{t("Ayrıntılı seçenekler")}</summary>
           <div class="adv">
-            <div class="arow"><span class="label">Kapsayıcı</span>
+            <div class="arow"><span class="label">{t("Kapsayıcı")}</span>
               <div class="seg">{#each [["mp4", "MP4"], ["mkv", "MKV"], ["webm", "WebM"]] as [c, l]}<button class:on={container === c} onclick={() => (container = c)}>{l}</button>{/each}</div>
             </div>
-            <button class="toggle" onclick={() => (chapters = !chapters)}><span class="switch" class:on={chapters}></span>Bölümleri göm</button>
-            <button class="toggle" onclick={() => (sponsor = !sponsor)}><span class="switch" class:on={sponsor}></span>Sponsor ve tanıtım kısımlarını kes</button>
+            <button class="toggle" onclick={() => (chapters = !chapters)}><span class="switch" class:on={chapters}></span>{t("Bölümleri göm")}</button>
+            <button class="toggle" onclick={() => (sponsor = !sponsor)}><span class="switch" class:on={sponsor}></span>{t("Sponsor ve tanıtım kısımlarını kes")}</button>
             {#if m.subs?.length}
-              <div class="arow col"><span class="label">Altyazı göm</span>
+              <div class="arow col"><span class="label">{t("Altyazı göm")}</span>
                 <div class="langs">{#each m.subs as l}<button class="badge" class:accent={subs.includes(l)} aria-pressed={subs.includes(l)} onclick={() => (subs = subs.includes(l) ? subs.filter((x) => x !== l) : [...subs, l])}>{l}</button>{/each}</div>
               </div>
             {/if}
@@ -237,28 +247,28 @@
         </details>
       {:else}
         <section>
-          <span class="label">Biçim</span>
-          <div class="qlist" role="radiogroup" aria-label="Ses biçimi">
+          <span class="label">{t("Biçim")}</span>
+          <div class="qlist" role="radiogroup" aria-label={t("Ses biçimi")}>
             {#each AUD as a}
               <button class="q" role="radio" aria-checked={codec === a.c} class:on={codec === a.c} onclick={() => (codec = a.c)}>
-                <i class="radio"></i><b>{a.c.toUpperCase()}</b><span class="dim">{a.d}</span><span></span>
+                <i class="radio"></i><b>{a.c.toUpperCase()}</b><span class="dim">{t(a.d)}</span><span></span>
               </button>
             {/each}
           </div>
         </section>
         {#if !lossless}
           <section>
-            <span class="label">Bit hızı</span>
+            <span class="label">{t("Bit hızı")}</span>
             <div class="seg">{#each [320, 256, 192, 128] as b}<button class="num" class:on={bitrate === b} onclick={() => (bitrate = b)}>{b} kbps</button>{/each}</div>
           </section>
         {/if}
-        <button class="toggle" onclick={() => (sponsor = !sponsor)}><span class="switch" class:on={sponsor}></span>Sponsor ve tanıtım kısımlarını kes</button>
+        <button class="toggle" onclick={() => (sponsor = !sponsor)}><span class="switch" class:on={sponsor}></span>{t("Sponsor ve tanıtım kısımlarını kes")}</button>
       {/if}
 
       {#if phase === "playlist"}
         <section>
-          <div class="lrow"><span class="label num">Videolar · {picked.size}/{m.entries.length} seçili</span>
-            <button class="link" onclick={() => (picked = picked.size === m.entries.length ? new Set() : new Set(m.entries.map((_: any, i: number) => i)))}>{picked.size === m.entries.length ? "Seçimi kaldır" : "Tümünü seç"}</button>
+          <div class="lrow"><span class="label num">{t("Videolar · {a}/{b} seçili", { a: picked.size, b: m.entries.length })}</span>
+            <button class="link" onclick={() => (picked = picked.size === m.entries.length ? new Set() : new Set(m.entries.map((_: any, i: number) => i)))}>{t(picked.size === m.entries.length ? "Seçimi kaldır" : "Tümünü seç")}</button>
           </div>
           <div class="plist">
             {#each m.entries as e, i}
@@ -274,42 +284,60 @@
       {/if}
     </div>
     <footer class="bar">
-      <button class="folder" onclick={pickFolder} data-tip="Klasörü değiştir"><Icon n="folder" size={14} /><span class="mono ellip">{defFolder}</span></button>
+      <button class="folder" onclick={pickFolder} data-tip={t("Klasörü değiştir")}><Icon n="folder" size={14} /><span class="mono ellip">{defFolder}</span></button>
       {#if estimate && phase === "media"}<span class="num est">~{bytes(estimate)}</span>{/if}
-      <button class="btn btn-lg" onclick={() => go(false)}>Sıraya ekle</button>
-      <button class="btn btn-primary btn-lg" onclick={() => go(true)} disabled={phase === "playlist" && !picked.size}><Icon n="down" size={14} />{phase === "playlist" ? `${picked.size} videoyu indir` : "İndir"}</button>
+      <button class="btn btn-lg" onclick={() => go(false)}>{t("Sıraya ekle")}</button>
+      <button class="btn btn-primary btn-lg" onclick={() => go(true)} disabled={phase === "playlist" && !picked.size}><Icon n="down" size={14} />{phase === "playlist" ? t("{n} videoyu indir", { n: picked.size }) : t("İndir")}</button>
+    </footer>
+  {:else if phase === "batch"}
+    <div class="body">
+      <p class="num">{t(batch.length >= 5000 ? "{n} dosya (en fazla 5000)" : "{n} dosya", { n: batch.length })}</p>
+      <ul class="blist mono">
+        {#each batch.slice(0, 4) as u}<li class="ellip">{u}</li>{/each}
+        {#if batch.length > 5}<li class="more num">{t("… {n} tane daha", { n: batch.length - 5 })}</li>{/if}
+        {#if batch.length > 4}<li class="ellip">{batch[batch.length - 1]}</li>{/if}
+      </ul>
+      <section>
+        <div class="lrow"><span class="label">{t("Bağlantı sayısı")}</span><b class="num">{conns}</b></div>
+        <input type="range" min="1" max="32" bind:value={conns} aria-label={t("Bağlantı sayısı")} />
+      </section>
+    </div>
+    <footer class="bar">
+      <button class="folder" onclick={pickFolder} data-tip={t("Klasörü değiştir")}><Icon n="folder" size={14} /><span class="mono ellip">{folder || (s.categorize ? t("Türüne göre klasörler") : s.folder)}</span></button>
+      <button class="btn btn-lg" onclick={() => go(false)}>{t("Sıraya ekle")}</button>
+      <button class="btn btn-primary btn-lg" onclick={() => go(true)}><Icon n="down" size={14} />{t("İndir")}</button>
     </footer>
   {:else if phase === "http"}
     {@const c = CATS[res.category] || CATS.diger}
     <div class="body">
       {#if dup}
-        <div class="note"><Icon n="info" size={15} /><span>Bu dosya listede var{dup.status === "done" ? `, ${ago(dup.finished).toLocaleLowerCase("tr")} indirildi` : ""}.</span>{#if dup.status === "done"}<button class="btn btn-sm" onclick={() => { call("open_task", { id: dup.id }); onclose(); }}>Var olanı aç</button>{/if}</div>
+        <div class="note"><Icon n="info" size={15} /><span>{dup.status === "done" ? t("Bu dosya listede var, {when} indirildi.", { when: agoLow(dup.finished) }) : t("Bu dosya listede var.")}</span>{#if dup.status === "done"}<button class="btn btn-sm" onclick={() => { call("open_task", { id: dup.id }); onclose(); }}>{t("Var olanı aç")}</button>{/if}</div>
       {/if}
       <div class="file">
         <span class="fic"><Icon n={c.icon} size={22} /></span>
         <div class="fi">
-          <label class="label" for="fname">Dosya adı</label>
+          <label class="label" for="fname">{t("Dosya adı")}</label>
           <input id="fname" class="field" bind:value={name} spellcheck="false" />
         </div>
       </div>
       <dl>
-        <dt>Boyut</dt><dd class="num">{res.http.size ? bytes(res.http.size) : "Bilinmiyor"}</dd>
-        <dt>Tür</dt><dd>{c.label}{res.http.ctype ? ` · ${res.http.ctype}` : ""}</dd>
-        <dt>Devam</dt><dd class:ok={res.http.resumable}>{res.http.resumable ? "Kaldığı yerden sürer" : "Desteklemiyor, kesilirse baştan iner"}</dd>
-        <dt>Kaynak</dt><dd class="mono ellip">{res.http.url}</dd>
+        <dt>{t("Boyut")}</dt><dd class="num">{res.http.size ? bytes(res.http.size) : t("Bilinmiyor")}</dd>
+        <dt>{t("Tür")}</dt><dd>{t(c.label)}{res.http.ctype ? ` · ${res.http.ctype}` : ""}</dd>
+        <dt>{t("Devam")}</dt><dd class:ok={res.http.resumable}>{t(res.http.resumable ? "Kaldığı yerden sürer" : "Desteklemiyor, kesilirse baştan iner")}</dd>
+        <dt>{t("Kaynak")}</dt><dd class="mono ellip">{res.http.url}</dd>
       </dl>
       {#if res.http.resumable}
         <section>
-          <div class="lrow"><span class="label">Bağlantı sayısı</span><b class="num">{conns}</b></div>
-          <input type="range" min="1" max="32" bind:value={conns} aria-label="Bağlantı sayısı" />
-          <p class="hint">Çoğu sunucu için 8 yeterli. Fazlası bazı sunucularda engellenmeye yol açar.</p>
+          <div class="lrow"><span class="label">{t("Bağlantı sayısı")}</span><b class="num">{conns}</b></div>
+          <input type="range" min="1" max="32" bind:value={conns} aria-label={t("Bağlantı sayısı")} />
+          <p class="hint">{t("Çoğu sunucu için 8 yeterli. Fazlası bazı sunucularda engellenmeye yol açar.")}</p>
         </section>
       {/if}
     </div>
     <footer class="bar">
-      <button class="folder" onclick={pickFolder} data-tip="Klasörü değiştir"><Icon n="folder" size={14} /><span class="mono ellip">{defFolder}</span></button>
-      <button class="btn btn-lg" onclick={() => go(false)}>Sıraya ekle</button>
-      <button class="btn btn-primary btn-lg" onclick={() => go(true)}><Icon n="down" size={14} />İndir</button>
+      <button class="folder" onclick={pickFolder} data-tip={t("Klasörü değiştir")}><Icon n="folder" size={14} /><span class="mono ellip">{defFolder}</span></button>
+      <button class="btn btn-lg" onclick={() => go(false)}>{t("Sıraya ekle")}</button>
+      <button class="btn btn-primary btn-lg" onclick={() => go(true)}><Icon n="down" size={14} />{t("İndir")}</button>
     </footer>
   {/if}
 </div>
@@ -327,6 +355,8 @@
   .url .field { height: 40px; font-size: 13px; }
   .hints { list-style: none; display: flex; flex-direction: column; gap: 6px; color: var(--text-2); font-size: 12.5px; }
   .hints li { display: flex; align-items: center; gap: 8px; }
+  .blist { list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
+  .blist .more { color: var(--text-3); font-family: inherit; }
   .hints :global(.ic) { color: var(--text-3); }
   .alert { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--r-2); background: var(--error-soft); color: var(--error); }
   .alert div { flex: 1; }

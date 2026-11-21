@@ -4,6 +4,7 @@ mod manager;
 mod media;
 mod model;
 mod native;
+mod post;
 mod refresh;
 mod scrape;
 mod stream;
@@ -183,6 +184,36 @@ async fn update_url(m: M<'_>, id: String, url: String) -> R<()> {
 fn free_space(m: M) -> u64 {
     let f = m.settings.lock().folder.clone();
     http::free_space(std::path::Path::new(&f)).unwrap_or(0)
+}
+
+/// bitmemişler ya da hepsi, satır başına bir adres
+#[tauri::command]
+fn export_list(m: M, path: String, all: bool) -> R<usize> {
+    let urls: Vec<String> = m
+        .tasks
+        .lock()
+        .iter()
+        .filter_map(|t| {
+            let d = t.d.lock();
+            (all || d.status != model::Status::Done).then(|| d.url.clone())
+        })
+        .collect();
+    std::fs::write(&path, urls.join("\r\n") + "\r\n").map_err(|e| e.to_string())?;
+    Ok(urls.len())
+}
+
+#[tauri::command]
+fn import_list(path: String) -> R<String> {
+    let b = std::fs::read(&path).map_err(|e| e.to_string())?;
+    if b.len() > 16 << 20 {
+        return Err("Dosya çok büyük".into());
+    }
+    Ok(String::from_utf8_lossy(&b).to_string())
+}
+
+#[tauri::command]
+fn set_task_limit(m: M, id: String, kb: u64) {
+    m.set_task_limit(&id, kb);
 }
 
 #[tauri::command]
@@ -476,7 +507,7 @@ pub fn run() {
             snapshot, get_settings, set_settings, analyze, scrape_page, add, add_many, pause, resume, start_now,
             restart, remove, move_task, update_url, free_space, pause_all, resume_all, clear_done, open_task, reveal_task, open_folder,
             read_clipboard, write_clipboard, tools_status, tools_install, cancel_shutdown, ext_folder, ext_status, ui_ready,
-            close_window, quit_app, verify_hash
+            close_window, quit_app, verify_hash, set_task_limit, export_list, import_list
         ])
         .run(tauri::generate_context!())
         .expect("Trawl başlatılamadı");

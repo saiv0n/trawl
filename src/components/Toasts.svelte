@@ -4,10 +4,11 @@
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
   import { toasts } from "../lib/store.svelte";
+  import { t as tr } from "../lib/i18n.svelte";
   const IC: Record<string, string> = { ok: "ok", error: "warn", info: "info", clip: "paste", warn: "power" };
 </script>
 
-<div class="stack" role="region" aria-label="Bildirimler" aria-live="polite">
+<div class="stack" role="region" aria-label={tr("Bildirimler")} aria-live="polite">
   {#each toasts.list as t (t.id)}
     <div
       class="toast k-{t.kind}"
@@ -26,7 +27,7 @@
       {#each t.actions || [] as a}
         <button class="btn btn-sm" class:btn-primary={a.primary} onclick={() => { a.run(); toasts.close(t.id); }}>{a.label}</button>
       {/each}
-      <button class="icon-btn" aria-label="Kapat" onclick={() => toasts.close(t.id)}><Icon n="x" size={13} /></button>
+      <button class="icon-btn" aria-label={tr("Kapat")} onclick={() => toasts.close(t.id)}><Icon n="x" size={13} /></button>
     </div>
   {/each}
 </div>

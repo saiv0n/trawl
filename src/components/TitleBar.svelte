@@ -2,6 +2,7 @@
   import Icon from "./Icon.svelte";
   import { call, inTauri } from "../lib/api";
   import { store } from "../lib/store.svelte";
+  import { t } from "../lib/i18n.svelte";
 
   let search: HTMLInputElement;
   let maxed = $state(false);
@@ -25,9 +26,9 @@
   <div class="center" data-tauri-drag-region>
     <label class="search">
       <Icon n="search" size={14} />
-      <input bind:this={search} bind:value={store.query} placeholder="İndirmelerde ara" spellcheck="false" aria-label="İndirmelerde ara" />
+      <input bind:this={search} bind:value={store.query} placeholder={t("İndirmelerde ara")} spellcheck="false" aria-label={t("İndirmelerde ara")} />
       {#if store.query}
-        <button class="clear" aria-label="Aramayı temizle" onclick={() => (store.query = "")}><Icon n="x" size={12} /></button>
+        <button class="clear" aria-label={t("Aramayı temizle")} onclick={() => (store.query = "")}><Icon n="x" size={12} /></button>
       {:else}
         <kbd>Ctrl F</kbd>
       {/if}
@@ -35,9 +36,9 @@
   </div>
 
   <div class="caption">
-    <button aria-label="Küçült" onclick={() => win("min")}><Icon n="min" size={14} /></button>
-    <button aria-label={maxed ? "Geri yükle" : "Büyüt"} onclick={() => win("max")}><Icon n="max" size={12} /></button>
-    <button class="close" aria-label="Kapat" onclick={() => win("close")}><Icon n="x" size={15} /></button>
+    <button aria-label={t("Küçült")} onclick={() => win("min")}><Icon n="min" size={14} /></button>
+    <button aria-label={t(maxed ? "Geri yükle" : "Büyüt")} onclick={() => win("max")}><Icon n="max" size={12} /></button>
+    <button class="close" aria-label={t("Kapat")} onclick={() => win("close")}><Icon n="x" size={15} /></button>
   </div>
 </header>
 

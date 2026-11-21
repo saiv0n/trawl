@@ -4,6 +4,7 @@
   import { call, type Task } from "../lib/api";
   import { store, toasts, CATS, ACTIVE } from "../lib/store.svelte";
   import { bytesParts, speed, eta, host, ago, middle, absTime } from "../lib/fmt";
+  import { t as tr } from "../lib/i18n.svelte";
 
   let { t, nameW = 240 }: { t: Task; nameW?: number } = $props();
 
@@ -12,7 +13,7 @@
   const settle = $derived(store.justDone.has(t.id));
   const pct = $derived(t.size ? Math.min(1, t.done / t.size) : 0);
   const stalled = $derived(t.status === "downloading" && t.eta === -2);
-  const displayName = $derived(middle(t.name || t.title || host(t.url) || "Hazırlanıyor", nameW));
+  const displayName = $derived(middle(t.name || t.title || host(t.url) || tr("Hazırlanıyor"), nameW));
   const STATUS: Record<string, [string, string]> = {
     queued: ["Sırada", "clock"], probing: ["Bağlanıyor", "spin"], downloading: ["İndiriliyor", "down"], processing: ["İşleniyor", "spin"],
     paused: ["Duraklatıldı", "pause"], done: ["Tamamlandı", "ok"], error: ["İndirilemedi", "warn"],
@@ -20,6 +21,7 @@
   const st = $derived.by(() => {
     if (stalled) return ["Bekleniyor", "offline"];
     if ((t.status === "processing" || t.status === "probing") && t.stage) return [t.stage, "spin"];
+    if (t.status === "queued" && t.stage) return [t.stage, "offline"];
     return STATUS[t.status];
   });
   const barState = $derived(
@@ -49,7 +51,7 @@
   }
   async function open(e?: MouseEvent) {
     e?.stopPropagation();
-    try { await call("open_task", { id: t.id }); } catch (x) { toasts.push({ kind: "error", title: "Açılamadı", body: String(x) }); }
+    try { await call("open_task", { id: t.id }); } catch (x) { toasts.push({ kind: "error", title: tr("Açılamadı"), body: tr(String(x)) }); }
   }
   function menu(e: MouseEvent) {
     e.preventDefault();
@@ -78,7 +80,7 @@
   <div class="c-name" role="gridcell" title={t.name || t.title}>
     <span class="nm">{displayName}</span>
     <span class="meta ellip">
-      {#if t.status === "error"}<span class="err">{t.error}</span>{:else}<span class="host">{host(t.url)}{#if t.quality}{" · "}{t.quality}{/if}</span>{/if}
+      {#if t.status === "error"}<span class="err">{tr(t.error)}</span>{:else}<span class="host">{host(t.url)}{#if t.quality}{" · "}{t.quality}{/if}</span>{/if}
       <!-- dar pencerede gizlenen sütunlar buraya iniyor, bilgi kaybolmasın -->
       {#if t.status !== "done" && t.status !== "error" && t.size}<span class="lv lv-sz num">{done[0]} {done[1]} / {size[0]} {size[1]}</span>{/if}
       {#if active && t.speed > 0}<span class="lv lv-sp num">{speed(t.speed)}{t.status === "downloading" && t.eta !== -2 ? ` · ${eta(t.eta)}` : ""}</span>{/if}
@@ -91,7 +93,7 @@
     {:else}
       {#key flip}<span class="si" class:morph={flip > 0}><Icon n={st[1]} size={14} filled={t.status === "done" || t.status === "error"} cls={st[1] === "spin" ? "spinning" : ""} /></span>{/key}
     {/if}
-    <span class="ellip">{st[0]}</span>
+    <span class="ellip">{tr(st[0])}</span>
   </div>
 
   <div class="c-pr" role="gridcell">
@@ -99,7 +101,7 @@
       {#if settle}<div class="collapse"><Progress pct={1} state="done" /></div>{:else}<span class="dim num" title={absTime(t.finished)}>{ago(t.finished)}</span>{/if}
     {:else}
       <Progress {pct} state={barState} notches={t.kind === "http" ? t.segs.length : 0} />
-      <span class="pct num">{t.size && t.status !== "processing" ? `%${Math.floor(pct * 100)}` : ""}</span>
+      <span class="pct num">{t.size && t.status !== "processing" ? tr("%{n}", { n: Math.floor(pct * 100) }) : ""}</span>
     {/if}
   </div>
 
@@ -115,14 +117,14 @@
 
   <div class="c-act" role="gridcell">
     {#if t.status === "done"}
-      <button class="icon-btn pri" aria-label="Aç" data-tip="Aç" onclick={open}><Icon n="external" size={15} /></button>
+      <button class="icon-btn pri" aria-label={tr("Aç")} data-tip={tr("Aç")} onclick={open}><Icon n="external" size={15} /></button>
     {:else if t.status !== "processing"}
-      <button class="icon-btn pri" aria-label={active ? "Duraklat" : t.status === "error" ? "Yeniden dene" : "Sürdür"} data-tip={active ? "Duraklat" : t.status === "error" ? "Yeniden dene" : "Sürdür"} onclick={toggle}>
+      <button class="icon-btn pri" aria-label={tr(active ? "Duraklat" : t.status === "error" ? "Yeniden dene" : "Sürdür")} data-tip={tr(active ? "Duraklat" : t.status === "error" ? "Yeniden dene" : "Sürdür")} onclick={toggle}>
         {#key flip}<span class="si" class:morph={flip > 0}><Icon n={active ? "pause" : t.status === "error" ? "retry" : "play"} size={15} /></span>{/key}
       </button>
     {/if}
-    <button class="icon-btn" aria-label="Klasörde göster" data-tip="Klasörde göster" onclick={(e) => { e.stopPropagation(); call("reveal_task", { id: t.id }); }}><Icon n="folder" size={15} /></button>
-    <button class="icon-btn" aria-label="Diğer" onclick={(e) => { e.stopPropagation(); menu(e); }}><Icon n="more" size={15} /></button>
+    <button class="icon-btn" aria-label={tr("Klasörde göster")} data-tip={tr("Klasörde göster")} onclick={(e) => { e.stopPropagation(); call("reveal_task", { id: t.id }); }}><Icon n="folder" size={15} /></button>
+    <button class="icon-btn" aria-label={tr("eylem|Diğer")} onclick={(e) => { e.stopPropagation(); menu(e); }}><Icon n="more" size={15} /></button>
   </div>
 </div>
 

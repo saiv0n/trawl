@@ -17,10 +17,62 @@ use std::time::Duration;
 
 const MIN_SPLIT: u64 = 1 << 20;
 
-// pixeldrain gibi siteler anonime tek bağlantı veriyor, host başına hatırla
-fn host_limits() -> &'static parking_lot::Mutex<std::collections::HashMap<String, u32>> {
-    static L: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<String, u32>>> = std::sync::OnceLock::new();
+type HostLimits = parking_lot::Mutex<std::collections::HashMap<String, (u32, std::time::Instant)>>;
+
+// pixeldrain gibi siteler anonime tek bağlantı veriyor, host başına hatırla.
+// sınır kalkmış olabilir, yarım saat sonra yeniden dene
+fn host_limits() -> &'static HostLimits {
+    static L: std::sync::OnceLock<HostLimits> = std::sync::OnceLock::new();
     L.get_or_init(Default::default)
+}
+
+/// aynı sunucuya bütün indirmelerin toplamı, ayarlardan geliyor
+pub static HOST_CONNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(16);
+
+fn host_used() -> &'static parking_lot::Mutex<std::collections::HashMap<String, u32>> {
+    static U: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<String, u32>>> = std::sync::OnceLock::new();
+    U.get_or_init(Default::default)
+}
+
+/// sunucudan pay alır, düşünce geri verir. en az bir bağlantı her zaman var
+struct HostShare {
+    host: String,
+    n: u32,
+}
+
+impl HostShare {
+    fn take(host: String, want: u32) -> Self {
+        let total = HOST_CONNS.load(Ordering::Relaxed);
+        let mut u = host_used().lock();
+        let used = u.entry(host.clone()).or_insert(0);
+        let n = if total == 0 { want } else { want.min(total.saturating_sub(*used)).max(1) };
+        *used += n;
+        Self { host, n }
+    }
+}
+
+impl Drop for HostShare {
+    fn drop(&mut self) {
+        let mut u = host_used().lock();
+        if let Some(x) = u.get_mut(&self.host) {
+            *x = x.saturating_sub(self.n);
+            if *x == 0 {
+                u.remove(&self.host);
+            }
+        }
+    }
+}
+
+fn host_cap(host: &str) -> u32 {
+    let mut l = host_limits().lock();
+    match l.get(host) {
+        Some((n, at)) if at.elapsed() < Duration::from_secs(30 * 60) => *n,
+        Some(_) => {
+            l.remove(host);
+            u32::MAX
+        }
+        None => u32::MAX,
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -63,7 +115,12 @@ pub fn rq(url: &str, h: &BTreeMap<String, String>) -> reqwest::RequestBuilder {
         Some(b) => client().post(url).body(b.clone()),
         None => client().get(url),
     };
-    hdrs(rb, h)
+    let rb = hdrs(rb, h);
+    // sayfadan gelen yetki başlığı varsa ona dokunma
+    match login_for(url) {
+        Some((u, p)) if hget(h, "Authorization").is_none() => rb.basic_auth(u, Some(p)),
+        _ => rb,
+    }
 }
 
 pub fn hdrs(rb: reqwest::RequestBuilder, h: &BTreeMap<String, String>) -> reqwest::RequestBuilder {
@@ -264,7 +321,7 @@ async fn single(t: &Arc<Task>, lim: &Arc<Limiter>, part: &PathBuf) -> Result<()>
         f.seek_write(&c, off)?;
         off += c.len() as u64;
         t.add_done(c.len() as u64);
-        tokio::select! { _ = tok.cancelled() => {}, _ = lim.take(c.len() as u64) => {} }
+        tokio::select! { _ = tok.cancelled() => {}, _ = take2(lim, &t.lim, c.len() as u64) => {} }
     }
     t.conns.store(0, Ordering::Relaxed);
     if !tok.is_cancelled() && expect > 0 && off < expect {
@@ -283,12 +340,16 @@ async fn multi(t: &Arc<Task>, lim: &Arc<Limiter>, conns: u32, part: &PathBuf) ->
         if d.conns_max > 0 { d.conns_max } else { conns }
     }
     .clamp(1, 64);
-    let host_cap = host_limits().lock().get(&host_of(&t.d.lock().url)).copied().unwrap_or(u32::MAX);
-    let want = want.min(host_cap).max(1) as u64;
+    let host = host_of(&t.d.lock().url);
+    let cap = host_cap(&host);
+    let share = HostShare::take(host, want.min(cap).max(1));
+    let want = share.n as u64;
     let fresh = !part.exists() || t.d.lock().segs.is_empty();
     let file = if fresh {
         let f = OpenOptions::new().create(true).write(true).truncate(true).read(true).open(part)?;
         let size = t.d.lock().size;
+        // seyrek değilse windows sondan ilk yazışta aradaki her yeri sıfırla doldurup bekletiyor
+        set_sparse(&f);
         f.set_len(size)?;
         let n = want.min(size.div_ceil(MIN_SPLIT)).max(1);
         let step = size / n;
@@ -309,6 +370,7 @@ async fn multi(t: &Arc<Task>, lim: &Arc<Limiter>, conns: u32, part: &PathBuf) ->
     }
     t.last_refusal.store(0, Ordering::Relaxed);
     let file = Arc::new(file);
+    *t.file.lock() = Some(file.clone());
     let err: Arc<parking_lot::Mutex<Option<anyhow::Error>>> = Arc::new(parking_lot::Mutex::new(None));
     let mut hs = vec![];
     for i in 0..want {
@@ -327,6 +389,7 @@ async fn multi(t: &Arc<Task>, lim: &Arc<Limiter>, conns: u32, part: &PathBuf) ->
     for h in hs {
         let _ = h.await;
     }
+    *t.file.lock() = None;
     if let Some(e) = err.lock().take() {
         return Err(e);
     }
@@ -442,8 +505,8 @@ async fn fetch(t: &Arc<Task>, lim: &Arc<Limiter>, f: &std::fs::File, i: usize) -
                             if explicit {
                                 // sunucu sınırı söyledi, host için hatırla
                                 let mut l = host_limits().lock();
-                                let e = l.entry(host_of(&url)).or_insert(u32::MAX);
-                                *e = (*e).min(others.max(1));
+                                let e = l.entry(host_of(&url)).or_insert((u32::MAX, std::time::Instant::now()));
+                                *e = (e.0.min(others.max(1)), std::time::Instant::now());
                             }
                             return Err(anyhow!("SHRINK"));
                         }
@@ -476,7 +539,7 @@ async fn fetch(t: &Arc<Task>, lim: &Arc<Limiter>, f: &std::fs::File, i: usize) -
                         return Ok(true);
                     }
                 }
-                tokio::select! { _ = tok.cancelled() => {}, _ = lim.take(n) => {} }
+                tokio::select! { _ = tok.cancelled() => {}, _ = take2(lim, &t.lim, n) => {} }
                 tries = 0;
             }
         }
@@ -498,7 +561,9 @@ async fn fetch(t: &Arc<Task>, lim: &Arc<Limiter>, f: &std::fs::File, i: usize) -
                 if s == "SHRINK" {
                     bail!("SHRINK");
                 }
-                tries += 1;
+                // ağ gittiyse sınırsız bekle, geri gelince kaldığı yerden sürsün
+                let net = e.downcast_ref::<reqwest::Error>().is_some_and(|r| !r.is_builder()) || s == "zaman aşımı";
+                tries = if net { (tries + 1).min(6) } else { tries + 1 };
                 if tries > 10 {
                     if s == "BUSY" {
                         bail!("Sunucu bağlantı sınırında ya da yoğun. Bu siteden başka bir indirme sürüyorsa onun bitmesini bekleyip yeniden deneyin");
@@ -513,6 +578,22 @@ async fn fetch(t: &Arc<Task>, lim: &Arc<Limiter>, f: &std::fs::File, i: usize) -
         }
     }
     Ok(())
+}
+
+async fn take2(a: &Limiter, b: &Limiter, n: u64) {
+    a.take(n).await;
+    b.take(n).await;
+}
+
+fn set_sparse(f: &std::fs::File) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::Ioctl::FSCTL_SET_SPARSE;
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+    let mut n = 0u32;
+    // fat32/exfat desteklemiyor, olmazsa eskisi gibi devam
+    unsafe {
+        DeviceIoControl(f.as_raw_handle() as _, FSCTL_SET_SPARSE, std::ptr::null(), 0, std::ptr::null_mut(), 0, &mut n, std::ptr::null_mut());
+    }
 }
 
 pub fn free_space(dir: &std::path::Path) -> Option<u64> {
@@ -553,7 +634,7 @@ mod tests {
         let (done, conns, path) = (t.get_done(), t.conns.load(Ordering::Relaxed), t.d.lock().path.clone());
         t.token().cancel();
         let _ = run.await;
-        let limit = super::host_limits().lock().get("pixeldrain.com").copied();
+        let limit = super::host_limits().lock().get("pixeldrain.com").map(|x| x.0);
         // baştan inen kısım sunucudakiyle aynı mı
         let seg0 = t.d.lock().segs.iter().find(|s| s.s == 0).map(|s| s.p).unwrap_or(0).min(1 << 20);
         let local = std::fs::read(format!("{path}.trawl")).unwrap_or_default();

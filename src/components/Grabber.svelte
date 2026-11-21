@@ -4,6 +4,7 @@
   import { call, on } from "../lib/api";
   import { store, toasts } from "../lib/store.svelte";
   import { bytes, host } from "../lib/fmt";
+  import { t } from "../lib/i18n.svelte";
 
   let { data, headers = {}, onclose }: { data: any; headers?: Record<string, string>; onclose: () => void; standalone?: boolean } = $props();
 
@@ -53,7 +54,7 @@
       const n = new Set(picked);
       for (const i of r.items) if (!had.has(i.url) && !["image", "unknown"].includes(i.kind)) n.add(i.url);
       picked = n;
-    } catch (e) { toasts.push({ kind: "error", title: "Sayfa taranamadı", body: String(e) }); }
+    } catch (e) { toasts.push({ kind: "error", title: t("Sayfa taranamadı"), body: t(String(e)) }); }
     scanning = false;
   }
 
@@ -69,7 +70,7 @@
     );
     if (!items.length) return;
     const n = await call("add_many", { list: items });
-    toasts.push({ kind: "ok", title: `${n ?? items.length} indirme sıraya eklendi`, body: page.title || host(page.url) });
+    toasts.push({ kind: "ok", title: t("{n} indirme sıraya eklendi", { n: n ?? items.length }), body: page.title || host(page.url) });
     onclose();
   }
 </script>
@@ -79,37 +80,37 @@
     {#if page.icon}<img class="fav" src={page.icon} alt="" referrerpolicy="no-referrer" />{:else}<Icon n="globe" size={18} />{/if}
     <div class="ht">
       <h2 class="ellip">{page.title || host(page.url)}</h2>
-      <p class="num">{host(page.url)} · {page.pages} sayfa tarandı · {page.items.length} öğe</p>
+      <p class="num">{host(page.url)} · {t("{p} sayfa tarandı · {n} öğe", { p: page.pages, n: page.items.length })}</p>
     </div>
-    <div class="seg" aria-label="Tarama derinliği">
+    <div class="seg" aria-label={t("Tarama derinliği")}>
       {#each [[0, "Bu sayfa"], [1, "1 seviye"], [2, "2 seviye"]] as [d, l]}
-        <button class:on={depth === d} disabled={scanning} onclick={() => deep(d as number)}>{l}</button>
+        <button class:on={depth === d} disabled={scanning} onclick={() => deep(d as number)}>{t(l as string)}</button>
       {/each}
     </div>
-    <button class="icon-btn" aria-label="Kapat" onclick={onclose}><Icon n="x" /></button>
+    <button class="icon-btn" aria-label={t("Kapat")} onclick={onclose}><Icon n="x" /></button>
   </header>
 
   <div class="tabs" role="tablist">
     {#each KINDS as [k, l, i]}
       {#if k === "all" || count(k)}
-        <button role="tab" aria-selected={tab === k} class:on={tab === k} onclick={() => (tab = k)}><Icon n={i} size={14} />{l}<em class="num">{count(k)}</em></button>
+        <button role="tab" aria-selected={tab === k} class:on={tab === k} onclick={() => (tab = k)}><Icon n={i} size={14} />{t(l)}<em class="num">{count(k)}</em></button>
       {/if}
     {/each}
   </div>
 
   <div class="tools">
-    <label class="q"><Icon n="search" size={14} /><input bind:value={q} placeholder="Süz" spellcheck="false" aria-label="Süz" /></label>
-    <button class="toggle" onclick={() => (minSize = !minSize)}><span class="switch" class:on={minSize}></span>Küçük görselleri gizle</button>
+    <label class="q"><Icon n="search" size={14} /><input bind:value={q} placeholder={t("Süz")} spellcheck="false" aria-label={t("Süz")} /></label>
+    <button class="toggle" onclick={() => (minSize = !minSize)}><span class="switch" class:on={minSize}></span>{t("Küçük görselleri gizle")}</button>
   </div>
 
   <div class="list" role="grid" aria-multiselectable="true">
     <div class="lh">
-      <button class="check" class:on={allOn} role="checkbox" aria-checked={allOn} aria-label="Görünenlerin tümünü seç" onclick={toggleAll}><Icon n="check" size={11} /></button>
-      <span>Ad</span><span>Kaynak</span><span class="r">Boyut</span>
+      <button class="check" class:on={allOn} role="checkbox" aria-checked={allOn} aria-label={t("Görünenlerin tümünü seç")} onclick={toggleAll}><Icon n="check" size={11} /></button>
+      <span>{t("Ad")}</span><span>{t("Kaynak")}</span><span class="r">{t("Boyut")}</span>
     </div>
     <div class="lb">
       {#if scanning}
-        <div class="scan" aria-live="polite"><span class="spinner"></span><b class="num">{prog.pages} sayfa tarandı · {prog.found} öğe</b><small>Aynı sitedeki bağlantılar geziliyor</small></div>
+        <div class="scan" aria-live="polite"><span class="spinner"></span><b class="num">{t("{p} sayfa tarandı · {n} öğe", { p: prog.pages, n: prog.found })}</b><small>{t("Aynı sitedeki bağlantılar geziliyor")}</small></div>
       {/if}
       {#each list as i (i.url)}
         <button class="it" class:on={picked.has(i.url)} role="row" aria-selected={picked.has(i.url)} onclick={() => toggle(i.url)}>
@@ -119,18 +120,18 @@
             <b class="ellip">{i.title && i.kind !== "image" ? i.title : i.name || host(i.url)}</b>
             <small class="mono ellip">{i.url}</small>
           </span>
-          <span class="src">{i.ext ? i.ext.toUpperCase() : i.kind === "embed" ? "Gömülü" : i.kind === "stream" ? "Akış" : ""}</span>
+          <span class="src">{i.ext ? i.ext.toUpperCase() : i.kind === "embed" ? t("Gömülü") : i.kind === "stream" ? t("Akış") : ""}</span>
           <span class="sz num">{i.size ? bytes(i.size) : i.kind === "embed" || i.kind === "stream" ? "Video" : "—"}</span>
         </button>
       {:else}
         {#if !scanning}
           <div class="none">
             {#if page.items.length}
-              <p>Süzgece uyan dosya yok.</p>
-              <button class="btn btn-sm" onclick={() => { q = ""; tab = "all"; minSize = false; }}>Süzgeçleri temizle</button>
+              <p>{t("Süzgece uyan dosya yok.")}</p>
+              <button class="btn btn-sm" onclick={() => { q = ""; tab = "all"; minSize = false; }}>{t("Süzgeçleri temizle")}</button>
             {:else}
-              <p>Bu sayfada indirilebilir dosya bulunamadı.</p>
-              <button class="btn btn-sm" onclick={() => deep(1)}>Bağlantılı sayfaları da tara</button>
+              <p>{t("Bu sayfada indirilebilir dosya bulunamadı.")}</p>
+              <button class="btn btn-sm" onclick={() => deep(1)}>{t("Bağlantılı sayfaları da tara")}</button>
             {/if}
           </div>
         {/if}
@@ -139,9 +140,9 @@
   </div>
 
   <footer>
-    <span class="sum num"><b>{picked.size}</b> seçili{selSize ? ` · ${bytes(selSize)}` : ""}</span>
-    <button class="btn btn-lg" onclick={onclose}>Vazgeç</button>
-    <button class="btn btn-primary btn-lg" disabled={!picked.size} onclick={download}><Icon n="down" size={14} />{picked.size} dosyayı indir</button>
+    <span class="sum num"><b>{picked.size}</b> {t("seçili")}{selSize ? ` · ${bytes(selSize)}` : ""}</span>
+    <button class="btn btn-lg" onclick={onclose}>{t("Vazgeç")}</button>
+    <button class="btn btn-primary btn-lg" disabled={!picked.size} onclick={download}><Icon n="down" size={14} />{t("{n} dosyayı indir", { n: picked.size })}</button>
   </footer>
 </div>
 

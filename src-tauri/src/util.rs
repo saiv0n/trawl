@@ -212,7 +212,18 @@ pub fn hash_file(path: &str, expected: &str) -> Result<(String, String), String>
     }
 }
 
+/// exe'nin yanında "portable" dosyası varsa her şey exe'nin yanındaki data klasöründe
+pub fn portable_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    dir.join("portable").exists().then(|| dir.join("data"))
+}
+
 pub fn data_dir() -> PathBuf {
+    if let Some(p) = portable_dir() {
+        let _ = std::fs::create_dir_all(&p);
+        return p;
+    }
     let base = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
     let p = PathBuf::from(&base).join("Trawl");
     // eski adla (Velora) kalan veriyi bir kez taşı
@@ -282,8 +293,11 @@ pub fn clean_err(m: &str) -> String {
     if low.contains("private video") {
         return "Bu video gizli".into();
     }
+    if low.contains("cookie database") || low.contains("failed to decrypt") || low.contains("could not find") && low.contains("cookies") {
+        return "Tarayıcının çerezleri okunamadı. Chrome ve Edge çalışırken çerezlerini kilitliyor; tarayıcıyı kapatıp yeniden deneyin ya da Ayarlar > Video'dan Firefox'u seçin".into();
+    }
     if low.contains("sign in to confirm") {
-        return "Site oturum açma istiyor (yaş ya da bot doğrulaması)".into();
+        return "Site oturum açma istiyor (yaş ya da bot doğrulaması). Ayarlar > Video'dan tarayıcı çerezlerini kullanmayı açın".into();
     }
     if low.contains("peer closed connection") || low.contains("connection reset") {
         return "Sunucu bağlantıyı kesti (koruma ya da sınır). Bağlantı sayısını azaltıp yeniden dene".into();
@@ -368,6 +382,41 @@ pub fn unseal_headers(h: &mut std::collections::BTreeMap<String, String>) {
             None => false,
         }
     });
+}
+
+fn logins() -> &'static parking_lot::RwLock<Vec<crate::model::Login>> {
+    static L: std::sync::OnceLock<parking_lot::RwLock<Vec<crate::model::Login>>> = std::sync::OnceLock::new();
+    L.get_or_init(Default::default)
+}
+
+pub fn set_logins(v: &[crate::model::Login]) {
+    *logins().write() = v.iter().filter(|l| !l.host.trim().is_empty() && !l.user.is_empty()).cloned().collect();
+}
+
+/// bu adrese kayıtlı kullanıcı adı ve şifre
+pub fn login_for(url: &str) -> Option<(String, String)> {
+    logins().read().iter().find(|l| crate::model::host_match(&l.host, url)).map(|l| (l.user.clone(), l.pass.clone()))
+}
+
+pub fn seal_str(v: &str) -> String {
+    if v.is_empty() || v.starts_with(SEALED) {
+        return v.to_string();
+    }
+    // dpapi her seferinde farklı çıktı veriyor, önbelleksiz kayıt hiç "değişmedi" olmaz
+    static C: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<String, String>>> = std::sync::OnceLock::new();
+    let mut c = C.get_or_init(Default::default).lock();
+    if let Some(x) = c.get(v) {
+        return x.clone();
+    }
+    let x = dpapi(v.as_bytes(), true).map(|b| format!("{SEALED}{}", b.iter().map(|x| format!("{x:02x}")).collect::<String>())).unwrap_or_default();
+    c.insert(v.to_string(), x.clone());
+    x
+}
+
+pub fn unseal_str(v: &str) -> String {
+    let Some(hex) = v.strip_prefix(SEALED) else { return v.to_string() };
+    let bytes: Option<Vec<u8>> = (0..hex.len()).step_by(2).map(|i| hex.get(i..i + 2).and_then(|x| u8::from_str_radix(x, 16).ok())).collect();
+    bytes.and_then(|b| dpapi(&b, false)).and_then(|b| String::from_utf8(b).ok()).unwrap_or_default()
 }
 
 #[cfg(test)]

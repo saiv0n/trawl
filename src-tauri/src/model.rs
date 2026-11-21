@@ -85,6 +85,13 @@ pub struct TaskData {
     pub segs: Vec<Seg>,
     pub opts: MediaOpts,
     pub conns_max: u32,
+    /// KB/s, 0 sınırsız
+    pub speed_limit: u64,
+    /// ağ hatasından sonra kendiliğinden kaç kez denendi, ne zaman yeniden denenecek (sn)
+    pub net_retries: u32,
+    pub retry_at: i64,
+    /// sunucudaki sağlamayla karşılaştırıldıysa algoritma adı
+    pub verified: String,
     pub stage: String,
     pub was_active: bool,
     /// otomatik tazeleme denendi mi, döngüye girmesin
@@ -117,6 +124,10 @@ impl Default for TaskData {
             segs: vec![],
             opts: MediaOpts::default(),
             conns_max: 0,
+            speed_limit: 0,
+            net_retries: 0,
+            retry_at: 0,
+            verified: String::new(),
             stage: String::new(),
             was_active: false,
             refresh_tries: 0,
@@ -204,11 +215,16 @@ pub struct Task {
     pub cancel: Mutex<CancellationToken>,
     pub running: AtomicBool,
     pub removing: AtomicBool,
+    /// bu indirmenin kendi hız sınırı, genel sınırla birlikte uygulanıyor
+    pub lim: std::sync::Arc<crate::manager::Limiter>,
+    /// açık parça dosyası, kayıttan önce diske itiliyor
+    pub file: Mutex<Option<std::sync::Arc<std::fs::File>>>,
 }
 
 impl Task {
     pub fn new(d: TaskData) -> Self {
         let done = d.done;
+        let kb = d.speed_limit;
         Self {
             d: Mutex::new(d),
             done: AtomicU64::new(done),
@@ -219,6 +235,12 @@ impl Task {
             cancel: Mutex::new(CancellationToken::new()),
             running: AtomicBool::new(false),
             removing: AtomicBool::new(false),
+            file: Mutex::new(None),
+            lim: {
+                let l = crate::manager::Limiter::new();
+                l.rate.store(kb * 1024, Ordering::Relaxed);
+                std::sync::Arc::new(l)
+            },
             last_refusal: std::sync::atomic::AtomicU16::new(0),
         }
     }
@@ -295,6 +317,8 @@ impl Task {
             } else {
                 String::new()
             },
+            speed_limit: d.speed_limit,
+            verified: d.verified.clone(),
         }
     }
 }
@@ -325,6 +349,47 @@ pub struct TaskView {
     pub resumable: bool,
     pub mode: String,
     pub quality: String,
+    pub speed_limit: u64,
+    pub verified: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
+pub struct Rule {
+    /// boşlukla ayrılmış uzantılar, boşsa hepsi
+    pub exts: String,
+    /// alt alan adları dahil, boşsa hepsi
+    pub host: String,
+    pub folder: String,
+}
+
+impl Rule {
+    pub fn hits(&self, name: &str, url: &str) -> bool {
+        if self.folder.trim().is_empty() || (self.exts.trim().is_empty() && self.host.trim().is_empty()) {
+            return false;
+        }
+        let e = crate::util::ext_of(name);
+        let ext_ok = self.exts.trim().is_empty() || self.exts.split([' ', ',']).any(|x| x.trim_start_matches('.').eq_ignore_ascii_case(&e));
+        ext_ok && host_match(&self.host, url)
+    }
+}
+
+/// boş desen her şeyi tutar; "github.com" alt alanları da kapsar
+pub fn host_match(pat: &str, url: &str) -> bool {
+    let p = pat.trim().trim_start_matches("*.").to_lowercase();
+    if p.is_empty() {
+        return true;
+    }
+    let h = crate::util::host_of(url);
+    h == p || h.ends_with(&format!(".{p}"))
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
+pub struct Login {
+    pub host: String,
+    pub user: String,
+    pub pass: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -369,6 +434,32 @@ pub struct Settings {
     pub schedule: bool,
     pub schedule_start: String,
     pub schedule_stop: String,
+    /// 0 pazartesi, 6 pazar; aralık başladığı güne sayılır
+    pub schedule_days: Vec<u8>,
+    /// biteni Windows Defender ile tara
+    pub scan: bool,
+    /// biten arşivi yanındaki klasöre aç
+    pub extract: bool,
+    /// açılan arşivi çöp kutusuna at
+    pub extract_delete: bool,
+    /// aynı sunucuya bütün indirmelerin toplamda açabileceği bağlantı
+    pub host_conns: u32,
+    /// saat aralığında ikinci hız sınırı (KB/s, 0 sınırsız)
+    pub alt_limit: bool,
+    pub alt_speed: u64,
+    pub alt_start: String,
+    pub alt_stop: String,
+    /// ilk tutan kural klasörü belirler
+    pub rules: Vec<Rule>,
+    pub logins: Vec<Login>,
+    /// yt-dlp --cookies-from-browser, boşsa kapalı
+    pub cookies_from: String,
+    pub open_done: bool,
+    /// {path}, {folder} ve {name} yerine konur
+    pub run_cmd: String,
+    /// sunucuda dosya.sha256 gibi bir sağlama varsa karşılaştır
+    pub auto_hash: bool,
+    pub lang: String,
     /// http://, https:// ya da socks5://, boşsa sistem ayarı
     pub proxy: String,
 }
@@ -413,6 +504,22 @@ impl Default for Settings {
             schedule: false,
             schedule_start: "02:00".into(),
             schedule_stop: "08:00".into(),
+            schedule_days: (0..7).collect(),
+            scan: false,
+            extract: false,
+            extract_delete: false,
+            host_conns: 16,
+            alt_limit: false,
+            alt_speed: 1024,
+            alt_start: "09:00".into(),
+            alt_stop: "18:00".into(),
+            rules: vec![],
+            logins: vec![],
+            cookies_from: String::new(),
+            open_done: false,
+            run_cmd: String::new(),
+            auto_hash: true,
+            lang: "tr".into(),
             proxy: String::new(),
         }
     }

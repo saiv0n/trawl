@@ -1,4 +1,5 @@
 import { call, type Settings, type Snapshot, type Task } from "./api";
+import { t } from "./i18n.svelte";
 
 export const CATS: Record<string, { label: string; icon: string }> = {
   video: { label: "Video", icon: "video" },
@@ -134,10 +135,10 @@ class Store {
     }, 6000);
     toasts.push({
       kind: "info",
-      title: ids.length === 1 ? "İndirme listeden kaldırıldı" : `${ids.length} indirme listeden kaldırıldı`,
+      title: ids.length === 1 ? t("İndirme listeden kaldırıldı") : t("{n} indirme listeden kaldırıldı", { n: ids.length }),
       ttl: 6000,
       actions: [{
-        label: "Geri al",
+        label: t("Geri al"),
         primary: true,
         run: () => {
           undone = true;
