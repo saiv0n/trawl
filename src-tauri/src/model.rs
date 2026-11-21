@@ -364,6 +364,7 @@ pub struct Settings {
     /// günde bir yt-dlp sürümüne bakıp kendiliğinden günceller
     pub tools_auto_update: bool,
     pub tools_checked: i64,
+    pub deno_checked: i64,
     /// her gün start'ta sıradakileri başlatır, stop'ta duraklatır (SS:DD)
     pub schedule: bool,
     pub schedule_start: String,
@@ -408,6 +409,7 @@ impl Default for Settings {
             autostart: false,
             tools_auto_update: true,
             tools_checked: 0,
+            deno_checked: 0,
             schedule: false,
             schedule_start: "02:00".into(),
             schedule_stop: "08:00".into(),

@@ -218,7 +218,7 @@
           {/each}
         </div>
         <div class="group">
-          {@render sw("yt-dlp'yi kendiliğinden güncelle", "Günde bir kez bakar, siteler değişince indirmeler bozulmasın. Yalnızca Trawl'ın kurduğu kopyayı günceller", "tools_auto_update")}
+          {@render sw("yt-dlp'yi kendiliğinden güncelle", "Eksikleri kendisi kurar. yt-dlp'ye günde, deno'ya haftada bir bakar; ffmpeg'e dokunmaz. Yeni sürüm açılmazsa eskisine döner", "tools_auto_update")}
         </div>
         <button class="btn btn-primary" disabled={!!busy} onclick={() => install("all")}>{#if busy === "all"}<span class="spinner"></span>{/if}Hepsini kur ya da güncelle</button>
       {:else}

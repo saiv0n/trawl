@@ -158,6 +158,10 @@
       case "schedule":
         toasts.push({ kind: "info", title: n.start ? "Zamanlayıcı indirmeleri başlattı" : "Zamanlayıcı indirmeleri duraklattı", ttl: 8000 });
         break;
+      case "tools_installed":
+        toasts.push({ kind: "ok", title: "Bileşenler kuruldu", body: `${n.names.join(", ")} hazır, video ve ses indirmeleri çalışır`, ttl: 8000 });
+        call("tools_status").then((x: any) => (store.tools = x)).catch(() => {});
+        break;
       case "tools_updated":
         toasts.push({ kind: "ok", title: `yt-dlp ${n.version} sürümüne güncellendi`, ttl: 6000 });
         call("tools_status").then((x: any) => (store.tools = x)).catch(() => {});
