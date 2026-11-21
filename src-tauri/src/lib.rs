@@ -9,6 +9,8 @@ mod scrape;
 mod stream;
 mod tools;
 mod util;
+#[cfg(test)]
+mod e2e_tests;
 
 use manager::{Manager, Snapshot};
 use model::{MediaOpts, Settings};
@@ -331,7 +333,7 @@ fn clip_urls(text: &str) -> Vec<String> {
     let re = RE.get_or_init(|| regex::Regex::new(r#"https?://[^\s<>"'`\x00-\x1f]+"#).unwrap());
     let mut out: Vec<String> = vec![];
     for m in re.find_iter(text) {
-        let u = m.as_str().trim_end_matches(|c| matches!(c, ')' | ']' | '}' | ',' | '.' | ';' | ':' | '!' | '?'));
+        let u = m.as_str().trim_end_matches([')', ']', '}', ',', '.', ';', ':', '!', '?']);
         if looks_downloadable(u) && !out.iter().any(|x| x == u) {
             out.push(u.to_string());
             if out.len() >= 500 {

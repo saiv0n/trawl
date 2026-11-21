@@ -303,7 +303,7 @@ impl Manager {
                 self.all_done();
             }
             ticks += 1;
-            let _ = self.app.emit("tick", self.tick_snapshot(ticks % 8 == 0));
+            let _ = self.app.emit("tick", self.tick_snapshot(ticks.is_multiple_of(8)));
             if last_save.elapsed() > Duration::from_secs(3) {
                 last_save = Instant::now();
                 self.save();
@@ -314,7 +314,7 @@ impl Manager {
     /// Görev çubuğu düğmesinde toplam ilerleme (yalnızca değişince).
     fn taskbar(&self, active: u32, done: u64, size: u64) {
         use tauri::window::{ProgressBarState, ProgressBarStatus};
-        let pct = if size > 0 { done * 100 / size } else { 0 };
+        let pct = (done * 100).checked_div(size).unwrap_or(0);
         let key = (active, if active > 0 && size == 0 { 1000 } else { pct });
         {
             let mut last = self.taskbar_last.lock();

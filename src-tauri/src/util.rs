@@ -207,7 +207,7 @@ pub fn clean_err(m: &str) -> String {
         let p: Vec<&str> = rest.split(':').collect();
         if p.len() >= 3 {
             let free = p[1].trim().parse::<u64>().unwrap_or(0);
-            let need = p[2].trim().split_whitespace().next().unwrap_or("0").parse::<u64>().unwrap_or(0);
+            let need = p[2].split_whitespace().next().unwrap_or("0").parse::<u64>().unwrap_or(0);
             return format!("Diskte yer kalmadı ({}: · {} boş, {} gerekli). Yer açın ya da başka klasör seçin.", p[0], human(free), human(need));
         }
     }

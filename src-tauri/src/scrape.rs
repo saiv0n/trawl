@@ -103,10 +103,10 @@ fn absolutize(base: &Url, raw: &str) -> Option<String> {
 fn best_srcset(s: &str) -> Option<String> {
     s.split(',')
         .filter_map(|p| {
-            let mut it = p.trim().split_whitespace();
+            let mut it = p.split_whitespace();
             let u = it.next()?.to_string();
             let w = it.next().unwrap_or("1x");
-            let n: f64 = w.trim_end_matches(|c| c == 'w' || c == 'x').parse().unwrap_or(1.0);
+            let n: f64 = w.trim_end_matches(['w', 'x']).parse().unwrap_or(1.0);
             Some((u, n))
         })
         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
@@ -227,7 +227,7 @@ pub fn parse(page_url: &str, html: &str) -> Page {
         }
         for s in e.select(&sel("source[src], source[data-src]")) {
             let sv = s.value();
-            let sh = sv.attr("type").map(|t| kind_of_mime(t)).filter(|k| !k.is_empty()).unwrap_or(hint);
+            let sh = sv.attr("type").map(kind_of_mime).filter(|k| !k.is_empty()).unwrap_or(hint);
             c.push(sv.attr("src").or(sv.attr("data-src")).unwrap(), v.name(), sh, &t, &poster);
         }
         for s in e.select(&sel("track[src]")) {
