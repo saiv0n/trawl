@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trawl</title>
+    <script>
+      // ilk boyamadan önce tema, beyaz parlama olmasın
+      try {
+        var l = JSON.parse(localStorage.getItem("trawl.look") || "null");
+        var dark = l ? l.dark : matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        if (l && l.accent) document.documentElement.dataset.accent = l.accent;
+      } catch (e) {}
+    </script>
+    <style>
+      html { background: oklch(0.988 0.002 75); }
+      html[data-theme="dark"] { background: oklch(0.195 0.004 75); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
