@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+export const isWin = typeof navigator === "undefined" || !/Linux|X11|Macintosh/.test(navigator.userAgent);
+export const sep = isWin ? "\\" : "/";
 
 export type Status = "queued" | "probing" | "downloading" | "processing" | "paused" | "done" | "error";
 export interface Task {

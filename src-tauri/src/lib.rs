@@ -20,7 +20,6 @@ use model::{MediaOpts, Settings};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::os::windows::process::CommandExt;
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -248,9 +247,34 @@ fn open_task(m: M, id: String) -> R<()> {
 fn reveal_task(m: M, id: String) -> R<()> {
     let (p, folder) = m.path_of(&id).ok_or("İndirme bulunamadı")?;
     if std::path::Path::new(&p).exists() {
-        std::process::Command::new("explorer").arg(format!("/select,{}", p.replace('/', "\\"))).spawn().map_err(e)?;
+        reveal(&p, &folder)?;
     } else {
         let _ = std::fs::create_dir_all(&folder);
+        tauri_plugin_opener::open_path(folder, None::<&str>).map_err(e)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn reveal(p: &str, _: &str) -> R<()> {
+    std::process::Command::new("explorer").arg(format!("/select,{}", p.replace('/', "\\"))).spawn().map_err(e)?;
+    Ok(())
+}
+
+/// nautilus, dolphin, nemo gibi dosya yöneticileri FileManager1 ile dosyayı seçili açıyor; yoksa klasörü aç
+#[cfg(not(windows))]
+fn reveal(p: &str, folder: &str) -> R<()> {
+    let uri = url::Url::from_file_path(p).map(|u| u.to_string()).unwrap_or_default();
+    let ok = !uri.is_empty()
+        && std::process::Command::new("gdbus")
+            .args(["call", "--session", "--dest", "org.freedesktop.FileManager1", "--object-path", "/org/freedesktop/FileManager1", "--method", "org.freedesktop.FileManager1.ShowItems"])
+            .arg(format!("['{}']", uri.replace('\'', "%27")))
+            .arg("")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+    if !ok {
         tauri_plugin_opener::open_path(folder, None::<&str>).map_err(e)?;
     }
     Ok(())
@@ -295,7 +319,10 @@ async fn verify_hash(m: M<'_>, id: String, expected: String) -> R<Value> {
 
 #[tauri::command]
 fn cancel_shutdown() {
-    let _ = std::process::Command::new("shutdown").arg("/a").creation_flags(NO_WINDOW).spawn();
+    #[cfg(windows)]
+    let _ = std::process::Command::new("shutdown").arg("/a").no_window().spawn();
+    #[cfg(not(windows))]
+    let _ = std::process::Command::new("shutdown").arg("-c").no_window().spawn();
 }
 
 #[tauri::command]
@@ -386,14 +413,35 @@ fn clip_urls(text: &str) -> Vec<String> {
     out
 }
 
+#[cfg(windows)]
+fn clip_seq() -> u64 {
+    unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() as u64 }
+}
+
+// linux'ta sıra numarası yok, metnin özetine bak
+#[cfg(not(windows))]
+fn clip_seq() -> u64 {
+    use std::hash::{Hash, Hasher};
+    thread_local!(static CB: std::cell::RefCell<Option<arboard::Clipboard>> = const { std::cell::RefCell::new(None) });
+    CB.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.is_none() {
+            *c = arboard::Clipboard::new().ok();
+        }
+        let t = c.as_mut().and_then(|c| c.get_text().ok()).unwrap_or_default();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        t.hash(&mut h);
+        h.finish()
+    })
+}
+
 fn clipboard_watch(m: Arc<Manager>) {
     std::thread::spawn(move || {
-        use windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber;
-        let mut last = unsafe { GetClipboardSequenceNumber() };
+        let mut last = clip_seq();
         let mut last_url = String::new();
         loop {
             std::thread::sleep(std::time::Duration::from_millis(700));
-            let s = unsafe { GetClipboardSequenceNumber() };
+            let s = clip_seq();
             if s == last {
                 continue;
             }

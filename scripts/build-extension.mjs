@@ -27,6 +27,10 @@ for (const [name, fix] of Object.entries(targets)) {
   cpSync(src, dir, { recursive: true, filter: (p) => !p.endsWith("manifest.json") });
   writeFileSync(join(dir, "manifest.json"), JSON.stringify(fix(manifest), null, 2) + "\n");
   const zip = join(out, `trawl-${name}-${manifest.version}.zip`);
-  execFileSync("powershell", ["-NoProfile", "-Command", `Compress-Archive -Path '${dir}\\*' -DestinationPath '${zip}' -Force`], { stdio: "inherit" });
+  if (process.platform === "win32") execFileSync("powershell", ["-NoProfile", "-Command", `Compress-Archive -Path '${dir}\\*' -DestinationPath '${zip}' -Force`], { stdio: "inherit" });
+  else {
+    rmSync(zip, { force: true });
+    execFileSync("7z", ["a", "-tzip", "-bd", "-bso0", zip, "."], { cwd: dir, stdio: "inherit" });
+  }
   console.log(`${name}: ${zip}`);
 }

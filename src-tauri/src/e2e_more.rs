@@ -160,6 +160,7 @@ async fn silent_connection_limit_does_not_hang() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[cfg(windows)]
 #[tokio::test]
 async fn part_file_is_sparse() {
     use std::os::windows::fs::MetadataExt;
@@ -230,12 +231,19 @@ fn host_share_splits_connections() {
     HOST_CONNS.store(old, Ordering::Relaxed);
 }
 
+fn mkzip(dir: &std::path::Path, zip: &str, src: &str) -> bool {
+    #[cfg(windows)]
+    let st = std::process::Command::new(r"C:\Windows\System32\tar.exe").current_dir(dir).args(["-a", "-cf", zip, src]).status();
+    #[cfg(not(windows))]
+    let st = std::process::Command::new("7z").current_dir(dir).args(["a", "-tzip", "-bd", zip, src]).stdout(std::process::Stdio::null()).status();
+    st.unwrap().success()
+}
+
 #[tokio::test]
-async fn windows_tar_extracts_zip() {
+async fn extracts_zip() {
     let dir = tmp("zip");
     std::fs::write(dir.join("a.txt"), b"merhaba").unwrap();
-    let st = std::process::Command::new(r"C:\Windows\System32\tar.exe").current_dir(&dir).args(["-a", "-cf", "p.zip", "a.txt"]).status().unwrap();
-    assert!(st.success());
+    assert!(mkzip(&dir, "p.zip", "a.txt"));
     std::fs::remove_file(dir.join("a.txt")).unwrap();
     let out = crate::post::extract(&dir.join("p.zip").to_string_lossy()).await.unwrap();
     assert_eq!(out, dir.join("p"));
@@ -246,8 +254,7 @@ async fn windows_tar_extracts_zip() {
     // içinde tek klasör olan arşiv iç içe açılmasın
     std::fs::create_dir_all(dir.join("paket").join("alt")).unwrap();
     std::fs::write(dir.join("paket").join("alt").join("b.txt"), b"x").unwrap();
-    let st = std::process::Command::new(r"C:\Windows\System32\tar.exe").current_dir(&dir).args(["-a", "-cf", "paket.zip", "paket"]).status().unwrap();
-    assert!(st.success());
+    assert!(mkzip(&dir, "paket.zip", "paket"));
     std::fs::remove_dir_all(dir.join("paket")).unwrap();
     let out3 = crate::post::extract(&dir.join("paket.zip").to_string_lossy()).await.unwrap();
     assert!(out3.join("alt").join("b.txt").exists(), "iç içe açıldı");
@@ -306,8 +313,16 @@ async fn run_command_after_download() {
     let dir = tmp("cmd");
     let f = dir.join("biten dosya.txt");
     std::fs::write(&f, b"x").unwrap();
-    let cmd = crate::post::expand_cmd("copy {path} {folder}\\kopya.txt", &f.to_string_lossy());
-    let st = tokio::process::Command::new("cmd").raw_arg(format!("/C {cmd}")).status().await.unwrap();
+    #[cfg(windows)]
+    let st = {
+        let cmd = crate::post::expand_cmd("copy {path} {folder}\\kopya.txt", &f.to_string_lossy());
+        tokio::process::Command::new("cmd").raw_arg(format!("/C {cmd}")).status().await.unwrap()
+    };
+    #[cfg(not(windows))]
+    let st = {
+        let cmd = crate::post::expand_cmd("cp {path} {folder}/kopya.txt", &f.to_string_lossy());
+        tokio::process::Command::new("sh").arg("-c").arg(cmd).status().await.unwrap()
+    };
     assert!(st.success());
     assert!(dir.join("kopya.txt").exists(), "boşluklu yolda komut çalışmadı");
     let _ = std::fs::remove_dir_all(&dir);

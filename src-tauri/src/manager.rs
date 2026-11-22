@@ -4,7 +4,6 @@ use crate::{http, media};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
-use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -23,6 +22,12 @@ fn net_error(e: &anyhow::Error) -> bool {
         || s.contains("Sunucu yanıt vermiyor")
 }
 
+#[cfg(not(windows))]
+fn suspend(hibernate: bool) {
+    let _ = std::process::Command::new("systemctl").arg(if hibernate { "hibernate" } else { "suspend" }).no_window().spawn();
+}
+
+#[cfg(windows)]
 fn suspend(hibernate: bool) {
     std::thread::spawn(move || unsafe {
         windows_sys::Win32::System::Power::SetSuspendState(hibernate.into(), false.into(), false.into());
@@ -469,7 +474,10 @@ impl Manager {
         self.notice(serde_json::json!({"type": "after_all", "action": act}));
         match act.as_str() {
             "shutdown" => {
-                let _ = std::process::Command::new("shutdown").args(["/s", "/t", "60"]).creation_flags(NO_WINDOW).spawn();
+                #[cfg(windows)]
+                let _ = std::process::Command::new("shutdown").args(["/s", "/t", "60"]).no_window().spawn();
+                #[cfg(not(windows))]
+                let _ = std::process::Command::new("shutdown").args(["-P", "+1"]).no_window().spawn();
             }
             // rundll32 ile çağırınca argümanlar yanlış geçiyor, hazırda bekletme açıksa uyutmak yerine onu yapıyordu
             "sleep" => suspend(false),

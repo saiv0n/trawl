@@ -531,6 +531,18 @@ impl Default for Settings {
     }
 }
 
+#[cfg(not(windows))]
+pub fn dirs_download() -> std::path::PathBuf {
+    // türkçe kurulumda İndirilenler oluyor, user-dirs'ten oku
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let p = std::process::Command::new("xdg-user-dir").arg("DOWNLOAD").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    match p {
+        Some(p) if p.starts_with('/') && p != home => std::path::PathBuf::from(p),
+        _ => std::path::PathBuf::from(home).join("Downloads"),
+    }
+}
+
+#[cfg(windows)]
 pub fn dirs_download() -> std::path::PathBuf {
     // kullanıcı İndirilenler'i başka sürücüye taşımış olabilir
     unsafe {

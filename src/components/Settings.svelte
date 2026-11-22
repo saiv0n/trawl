@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import Icon from "./Icon.svelte";
-  import { call, on, inTauri } from "../lib/api";
+  import { call, on, inTauri, isWin } from "../lib/api";
   import { store, toasts } from "../lib/store.svelte";
   import { bytes, speed } from "../lib/fmt";
   import { t as tr } from "../lib/i18n.svelte";
@@ -20,7 +20,7 @@
   const TABS = [["genel", "Genel"], ["indirme", "İndirme"], ["medya", "Video ve ses"], ["gorunum", "Görünüm"], ["tarayici", "Tarayıcı"], ["kurallar", "Klasör ve giriş"], ["bilesen", "Bileşenler"], ["hakkinda", "Hakkında"]];
   // ayar araması için her sekmenin anahtar kelimeleri
   const KEYS: Record<string, string> = {
-    genel: "klasör konum türe göre pano tepsi windows başlat sürdür bildirim ses bitince uyku kapat",
+    genel: "klasör konum türe göre pano tepsi windows oturum başlat sürdür bildirim ses bitince uyku kapat",
     indirme: "bağlantı aynı anda hız sınır sunucu saat gündüz proxy zamanlayıcı",
     kurallar: "kural klasör uzantı site giriş kullanıcı şifre parola yetki",
     medya: "video kalite kapsayıcı mp4 mkv ses biçim mp3 bit hızı çerez tarayıcı oturum yaş",
@@ -36,7 +36,7 @@
   const ASK = [0, 10, 50, 100, 250, 500, 1024, 2048];
   const DEFAULT_EXTS = "zip rar 7z tar gz tgz bz2 xz zst cab iso img bin exe msi msix appx apk xapk dmg pkg deb rpm appimage jar mp4 mkv avi mov wmv flv webm m4v mpg mpeg 3gp ts mp3 m4a aac flac wav ogg opus wma pdf epub mobi djvu doc docx xls xlsx ppt pptx odt ods odp psd ai torrent";
   const HOSTC = [4, 8, 16, 32, 0];
-  const CMD_EX = "Örnek: copy {path} D:\\Yedek";
+  const CMD_EX = isWin ? "Örnek: copy {path} D:\\Yedek" : "Örnek: cp {path} ~/Yedek";
   const kb = (v: number) => (v ? speed(v * 1024) : tr("Sınırsız"));
   const setRule = (i: number, p: Record<string, string>) => set({ rules: s.rules.map((r, j) => (j === i ? { ...r, ...p } : r)) });
   const setLogin = (i: number, p: Record<string, string>) => set({ logins: s.logins.map((r, j) => (j === i ? { ...r, ...p } : r)) });
@@ -133,7 +133,7 @@
         <div class="group">
           {@render sw("Panoyu izle", "Bir bağlantı kopyalayınca indirmeyi önerir", "clipboard")}
           {@render sw("Kapatınca tepside kal", "Pencere kapansa da indirmeler sürer", "tray")}
-          {@render sw("Windows açılınca başlat", "Tepside sessizce başlar", "autostart", autostart)}
+          {@render sw(isWin ? "Windows açılınca başlat" : "Oturum açılınca başlat", "Tepside sessizce başlar", "autostart", autostart)}
           {@render sw("Yarım kalanları sürdür", "Uygulama açılınca kaldığı yerden devam eder", "auto_resume")}
         </div>
         <div class="group">
@@ -148,7 +148,7 @@
         <div class="group">
           {@render sw("Bildirimler", "Pencere arkadayken biten ve hata veren indirmeleri bildirir", "notify")}
           {@render sw("Bitiş sesi", "Kısa bir tık", "sound")}
-          {@render sw("Biteni virüs için tara", "Windows Defender ile; tehdit bulursa indirme hatalı sayılır", "scan")}
+          {@render sw("Biteni virüs için tara", isWin ? "Windows Defender ile; tehdit bulursa indirme hatalı sayılır" : "ClamAV ile (clamav paketi); tehdit bulursa indirme hatalı sayılır", "scan")}
           {@render sw("Arşivleri aç", "Biten zip, 7z, rar ve tar dosyasını yanındaki klasöre çıkarır", "extract")}
           {#if s.extract}{@render sw("Açtıktan sonra arşivi sil", "Arşiv çöp kutusuna gider", "extract_delete")}{/if}
           {@render sw("Sağlamayı kendiliğinden kontrol et", "Sunucuda dosya.sha256 gibi bir sağlama varsa biten dosyayla karşılaştırır", "auto_hash")}
@@ -243,7 +243,7 @@
         </div>
       {:else if cur === "gorunum"}
         <div class="group">
-          <div class="line"><div><b>{tr("Tema")}</b><small>{tr("Sistem, Windows ayarını izler")}</small></div>
+          <div class="line"><div><b>{tr("Tema")}</b><small>{tr(isWin ? "Sistem, Windows ayarını izler" : "Sistem, masaüstü ayarını izler")}</small></div>
             <div class="seg">{#each [["system", "Sistem"], ["light", "Açık"], ["dark", "Koyu"]] as [v, l]}<button class:on={s.theme === v} onclick={() => set({ theme: v })}>{tr(l)}</button>{/each}</div></div>
           <div class="line"><div><b>{tr("Vurgu rengi")}</b><small>{tr("Etkin indirme, seçim ve ana düğme")}</small></div>
             <div class="swatches" role="radiogroup" aria-label={tr("Vurgu rengi")}>
@@ -253,7 +253,7 @@
             </div></div>
           <div class="line"><div><b>{tr("Satır yüksekliği")}</b></div>
             <div class="seg">{#each [["compact", "Sıkı"], ["default", "Normal"], ["comfortable", "Rahat"]] as [v, l]}<button class:on={(s.density || "default") === v} onclick={() => set({ density: v })}>{tr(l)}</button>{/each}</div></div>
-          <div class="line"><div><b>{tr("Hareket")}</b><small>{tr("Sistem, Windows'taki animasyon ayarını izler")}</small></div>
+          <div class="line"><div><b>{tr("Hareket")}</b><small>{tr(isWin ? "Sistem, Windows'taki animasyon ayarını izler" : "Sistem, masaüstündeki animasyon ayarını izler")}</small></div>
             <div class="seg">{#each [["system", "Sistem"], ["full", "Tam"], ["reduced", "Azaltılmış"], ["off", "Kapalı"]] as [v, l]}<button class:on={(s.motion_mode || "system") === v} onclick={() => set({ motion_mode: v })}>{tr(l)}</button>{/each}</div></div>
           <div class="line"><div><b>Dil / Language</b></div>
             <div class="seg">{#each [["tr", "Türkçe"], ["en", "English"]] as [v, l]}<button class:on={(s.lang || "tr") === v} onclick={() => set({ lang: v })}>{l}</button>{/each}</div></div>
@@ -303,7 +303,7 @@
         </div>
         <div class="group">
           <div class="line col">
-            <div><b>{tr("Site girişleri")}</b><small>{tr("Kullanıcı adı ve şifre isteyen sunucular için (HTTP Basic). Video sitelerinde yt-dlp'ye verilir. Şifreler bu bilgisayardaki Windows hesabına bağlı şifrelenip saklanır.")}</small></div>
+            <div><b>{tr("Site girişleri")}</b><small>{tr(isWin ? "Kullanıcı adı ve şifre isteyen sunucular için (HTTP Basic). Video sitelerinde yt-dlp'ye verilir. Şifreler bu bilgisayardaki Windows hesabına bağlı şifrelenip saklanır." : "Kullanıcı adı ve şifre isteyen sunucular için (HTTP Basic). Video sitelerinde yt-dlp'ye verilir. Şifreler yalnızca senin kullanıcının okuyabildiği klasörde saklanır.")}</small></div>
             {#each s.logins || [] as l, i}
               <div class="rule">
                 <input class="field mono" spellcheck="false" placeholder={tr("ornek.com")} value={l.host} onchange={(e) => setLogin(i, { host: e.currentTarget.value.trim().toLowerCase() })} aria-label="Site" />
@@ -316,7 +316,7 @@
           </div>
         </div>
       {:else if cur === "bilesen"}
-        <p class="note">{tr("Uygulama klasörüne kurulur")} (<span class="mono">%APPDATA%\Trawl\bin</span>), {tr("sistemine dokunmaz. PATH'te varsa onlar kullanılır.")}</p>
+        <p class="note">{tr("Uygulama klasörüne kurulur")} (<span class="mono">{isWin ? "%APPDATA%\\Trawl\\bin" : "~/.local/share/Trawl/bin"}</span>), {tr("sistemine dokunmaz. PATH'te varsa onlar kullanılır.")}</p>
         <div class="group">
           {#each TOOLS as t}
             {@const p = prog[t.n]}
@@ -343,7 +343,7 @@
           <dt>{tr("Motor")}</dt><dd>{tr("Rust; dosya başına 32'ye kadar bağlantı, dinamik parça bölme")}</dd>
           <dt>{tr("Devam")}</dt><dd>{tr("Parça durumu üç saniyede bir diske yazılır")}</dd>
           <dt>Video</dt><dd>{tr("yt-dlp, HLS ve DASH akışları, altyazı, bölümler")}</dd>
-          <dt>{tr("Veri")}</dt><dd class="mono">%APPDATA%\Trawl</dd>
+          <dt>{tr("Veri")}</dt><dd class="mono">{isWin ? "%APPDATA%\\Trawl" : "~/.local/share/Trawl"}</dd>
           <dt>{tr("Lisanslar")}</dt><dd>{tr("yt-dlp (Unlicense), FFmpeg (LGPL 2.1), deno (MIT), Mona Sans ve JetBrains Mono (OFL), Phosphor (MIT)")}</dd>
         </dl>
       {/if}

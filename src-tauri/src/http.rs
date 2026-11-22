@@ -9,7 +9,6 @@ use futures_util::StreamExt;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
-use std::os::windows::fs::FileExt;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -332,7 +331,7 @@ async fn single(t: &Arc<Task>, lim: &Arc<Limiter>, part: &PathBuf) -> Result<()>
         let Ok(c) = c else { bail!("Sunucu yanıt vermiyor (zaman aşımı)") };
         let Some(c) = c else { break };
         let c = c?;
-        f.seek_write(&c, off)?;
+        write_at(&f, &c, off)?;
         off += c.len() as u64;
         t.add_done(c.len() as u64);
         tokio::select! { _ = tok.cancelled() => {}, _ = take2(lim, &t.lim, c.len() as u64) => {} }
@@ -467,7 +466,7 @@ fn flush(t: &Task, f: &std::fs::File, i: usize, buf: &mut Vec<u8>) -> Result<(bo
     };
     let n = (buf.len() as u64).min(room) as usize;
     if n > 0 {
-        f.seek_write(&buf[..n], pos)?;
+        write_at(f, &buf[..n], pos)?;
         t.d.lock().segs[i].p += n as u64;
         t.add_done(n as u64);
     }
@@ -612,6 +611,28 @@ async fn take2(a: &Limiter, b: &Limiter, n: u64) {
     b.take(n).await;
 }
 
+fn write_at(f: &std::fs::File, mut buf: &[u8], mut off: u64) -> std::io::Result<()> {
+    #[cfg(windows)]
+    use std::os::windows::fs::FileExt;
+    while !buf.is_empty() {
+        #[cfg(windows)]
+        let n = f.seek_write(buf, off)?;
+        #[cfg(unix)]
+        let n = std::os::unix::fs::FileExt::write_at(f, buf, off)?;
+        if n == 0 {
+            return Err(std::io::ErrorKind::WriteZero.into());
+        }
+        buf = &buf[n..];
+        off += n as u64;
+    }
+    Ok(())
+}
+
+// linux'ta set_len zaten seyrek dosya açıyor
+#[cfg(not(windows))]
+fn set_sparse(_: &std::fs::File) {}
+
+#[cfg(windows)]
 fn set_sparse(f: &std::fs::File) {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::System::Ioctl::FSCTL_SET_SPARSE;
@@ -623,6 +644,22 @@ fn set_sparse(f: &std::fs::File) {
     }
 }
 
+#[cfg(unix)]
+pub fn free_space(dir: &std::path::Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut p = dir.to_path_buf();
+    while !p.exists() {
+        p = p.parent()?.to_path_buf();
+    }
+    let c = std::ffi::CString::new(p.as_os_str().as_bytes()).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    Some(st.f_bavail as u64 * st.f_frsize as u64)
+}
+
+#[cfg(windows)]
 pub fn free_space(dir: &std::path::Path) -> Option<u64> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;

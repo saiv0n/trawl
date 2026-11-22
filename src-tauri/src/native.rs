@@ -3,7 +3,6 @@
 
 use serde_json::{json, Value};
 use std::io::{Read, Write};
-use std::os::windows::process::CommandExt;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -32,8 +31,23 @@ async fn running(c: &reqwest::Client) -> bool {
     matches!(c.get(u).timeout(Duration::from_millis(800)).send().await, Ok(r) if r.status().is_success())
 }
 
+/// appimage'de current_exe geçici bağlama noktasını gösteriyor, asıl dosya APPIMAGE'da
+fn me() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPIMAGE").map(Into::into).filter(|p: &std::path::PathBuf| p.is_file()).or_else(|| std::env::current_exe().ok())
+}
+
+#[cfg(unix)]
 fn spawn_app() -> bool {
-    let Ok(exe) = std::env::current_exe() else { return false };
+    use crate::util::NoWindow;
+    let Some(exe) = me() else { return false };
+    // kendi süreç grubunda, tarayıcı host'u kapatınca uygulama da gitmesin
+    std::process::Command::new(&exe).arg("--tray").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).no_window().spawn().is_ok()
+}
+
+#[cfg(windows)]
+fn spawn_app() -> bool {
+    use std::os::windows::process::CommandExt;
+    let Some(exe) = me() else { return false };
     const DETACHED: u32 = 0x0000_0008;
     const NEW_GROUP: u32 = 0x0000_0200;
     const BREAKAWAY: u32 = 0x0100_0000; // tarayıcının job nesnesinden çık, host kapanınca uygulama da ölmesin
@@ -113,26 +127,59 @@ pub fn run_host(origin: String) {
     }
 }
 
+#[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+#[cfg(windows)]
 fn reg_default(subkey: &str, value: &str) -> bool {
     use windows_sys::Win32::System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
     let (k, v) = (wide(subkey), wide(value));
     unsafe { RegSetKeyValueW(HKEY_CURRENT_USER, k.as_ptr(), std::ptr::null(), REG_SZ, v.as_ptr().cast(), (v.len() * 2) as u32) == 0 }
 }
 
-// her açılışta manifestleri yaz, kayıtları bu exe'ye bağla ki exe taşınsa da yol doğru kalsın. HKCU, yönetici gerekmez
-pub fn register() {
-    let Ok(exe) = std::env::current_exe() else { return };
-    let exe = exe.to_string_lossy().to_string();
-    let dir = crate::util::data_dir();
+fn manifests(exe: &str) -> (Value, Value) {
     let base = json!({"name": HOST, "description": "Trawl indirme yöneticisi köprüsü", "path": exe, "type": "stdio"});
     let mut chrome = base.clone();
     chrome["allowed_origins"] = json!(CHROME_IDS.iter().map(|i| format!("chrome-extension://{i}/")).collect::<Vec<_>>());
     let mut ff = base;
     ff["allowed_extensions"] = json!([GECKO_ID]);
+    (chrome, ff)
+}
+
+/// chrome ailesi ~/.config altında, firefox ve türevleri kendi gizli klasöründe arıyor
+#[cfg(unix)]
+pub fn register() {
+    let Some(exe) = me() else { return };
+    let (chrome, ff) = manifests(&exe.to_string_lossy());
+    let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let cfg = std::env::var("XDG_CONFIG_HOME").ok().filter(|v| v.starts_with('/')).map(Into::into).unwrap_or_else(|| home.join(".config"));
+    let file = format!("{HOST}.json");
+    let put = |dir: std::path::PathBuf, v: &Value| {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join(&file), serde_json::to_vec_pretty(v).unwrap());
+    };
+    for b in ["google-chrome", "google-chrome-beta", "google-chrome-unstable", "chromium", "microsoft-edge", "BraveSoftware/Brave-Browser", "vivaldi", "opera", "thorium"] {
+        // kurulu olmayan tarayıcı için klasör açma
+        if cfg.join(b).is_dir() {
+            put(cfg.join(b).join("NativeMessagingHosts"), &chrome);
+        }
+    }
+    put(home.join(".mozilla").join("native-messaging-hosts"), &ff);
+    for b in [".librewolf", ".waterfox", ".floorp", ".zen"] {
+        if home.join(b).is_dir() {
+            put(home.join(b).join("native-messaging-hosts"), &ff);
+        }
+    }
+}
+
+// her açılışta manifestleri yaz, kayıtları bu exe'ye bağla ki exe taşınsa da yol doğru kalsın. HKCU, yönetici gerekmez
+#[cfg(windows)]
+pub fn register() {
+    let Some(exe) = me() else { return };
+    let dir = crate::util::data_dir();
+    let (chrome, ff) = manifests(&exe.to_string_lossy());
     let (cp, fp) = (dir.join("native-chromium.json"), dir.join("native-firefox.json"));
     let ok = std::fs::write(&cp, serde_json::to_vec_pretty(&chrome).unwrap()).is_ok() && std::fs::write(&fp, serde_json::to_vec_pretty(&ff).unwrap()).is_ok();
     if !ok {
@@ -147,6 +194,7 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
     #[test]
     fn registry_default_value_roundtrip() {
         let key = r"Software\TrawlTest\NativeMessagingHosts\com.trawl.bridge";

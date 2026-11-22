@@ -19,7 +19,7 @@ pub fn ytdlp() -> Result<PathBuf> {
 
 fn base_cmd() -> Result<Command> {
     let mut c = Command::new(ytdlp()?);
-    c.creation_flags(NO_WINDOW)
+    c.no_window()
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUTF8", "1")
         .stdin(Stdio::null())

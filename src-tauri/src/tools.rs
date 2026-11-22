@@ -10,12 +10,18 @@ use serde::Serialize;
 use std::path::Path;
 use tauri::{AppHandle, Emitter};
 
-const YTDLP: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
+const YT: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/";
+const DN: &str = "https://github.com/denoland/deno/releases/latest/download/";
+const FF: &str = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/";
 // LGPL derlemesi, ticari dağıtımda GPL'den rahat
-const DENO: &str = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip";
-const FFMPEG: &str = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip";
+#[cfg(windows)]
+const ASSETS: (&str, &str, &str) = ("yt-dlp.exe", "deno-x86_64-pc-windows-msvc.zip", "ffmpeg-master-latest-win64-lgpl.zip");
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const ASSETS: (&str, &str, &str) = ("yt-dlp_linux", "deno-x86_64-unknown-linux-gnu.zip", "ffmpeg-master-latest-linux64-lgpl.tar.xz");
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const ASSETS: (&str, &str, &str) = ("yt-dlp_linux_aarch64", "deno-aarch64-unknown-linux-gnu.zip", "ffmpeg-master-latest-linuxarm64-lgpl.tar.xz");
+const EXE: &str = std::env::consts::EXE_SUFFIX;
 const YTDLP_SUM: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS";
-const DENO_SUM: &str = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip.sha256sum";
 const FFMPEG_SUM: &str = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/checksums.sha256";
 
 const DAY: i64 = 86_400;
@@ -35,7 +41,7 @@ pub struct ToolStatus {
 }
 
 async fn version(p: &Path, arg: &str) -> String {
-    let out = tokio::process::Command::new(p).arg(arg).creation_flags(NO_WINDOW).output();
+    let out = tokio::process::Command::new(p).arg(arg).no_window().output();
     match tokio::time::timeout(std::time::Duration::from_secs(20), out).await {
         Ok(Ok(o)) if o.status.success() => String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string(),
         _ => String::new(),
@@ -78,8 +84,7 @@ async fn fetch_checked(app: &AppHandle, name: &str, url: &str, sums: &str) -> Re
 }
 
 fn runs(p: &Path, arg: &str) -> bool {
-    use std::os::windows::process::CommandExt;
-    std::process::Command::new(p).arg(arg).creation_flags(NO_WINDOW).output().map(|o| o.status.success()).unwrap_or(false)
+    std::process::Command::new(p).arg(arg).no_window().output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// yenisini yerine koyar, eskisini .old diye saklar. yenisi `check` ile açılmazsa eskisine döner.
@@ -87,6 +92,11 @@ fn runs(p: &Path, arg: &str) -> bool {
 fn replace(dir: &Path, name: &str, data: &mut dyn std::io::Read, check: &str) -> Result<()> {
     let (target, tmp, old) = (dir.join(name), dir.join(format!("{name}.new")), dir.join(format!("{name}.old")));
     std::io::copy(data, &mut std::fs::File::create(&tmp)?)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+    }
     let had = target.exists();
     if had {
         let _ = std::fs::remove_file(&old);
@@ -127,26 +137,53 @@ async fn fetch(app: &AppHandle, name: &str, url: &str) -> Result<Vec<u8>> {
 }
 
 async fn install_ytdlp(app: &AppHandle) -> Result<()> {
-    let b = fetch_checked(app, "yt-dlp", YTDLP, YTDLP_SUM).await?;
+    let b = fetch_checked(app, "yt-dlp", &format!("{YT}{}", ASSETS.0), YTDLP_SUM).await?;
     let dir = bin_dir();
-    tokio::task::spawn_blocking(move || replace(&dir, "yt-dlp.exe", &mut b.as_slice(), "--version")).await?
+    tokio::task::spawn_blocking(move || replace(&dir, &format!("yt-dlp{EXE}"), &mut b.as_slice(), "--version")).await?
 }
 
 async fn install_deno(app: &AppHandle) -> Result<()> {
-    let b = fetch_checked(app, "deno", DENO, DENO_SUM).await?;
+    let b = fetch_checked(app, "deno", &format!("{DN}{}", ASSETS.1), &format!("{DN}{}.sha256sum", ASSETS.1)).await?;
     let dir = bin_dir();
     tokio::task::spawn_blocking(move || -> Result<()> {
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(b))?;
-        let mut f = z.by_name("deno.exe")?;
-        replace(&dir, "deno.exe", &mut f, "--version")
+        let n = format!("deno{EXE}");
+        let mut f = z.by_name(&n)?;
+        replace(&dir, &n, &mut f, "--version")
     })
     .await?
 }
 
 async fn install_ffmpeg(app: &AppHandle) -> Result<()> {
-    let b = fetch_checked(app, "ffmpeg", FFMPEG, FFMPEG_SUM).await?;
+    let b = fetch_checked(app, "ffmpeg", &format!("{FF}{}", ASSETS.2), FFMPEG_SUM).await?;
     let _ = app.emit("tools-progress", serde_json::json!({"name": "ffmpeg", "stage": "Açılıyor"}));
     let dir = bin_dir();
+    #[cfg(not(windows))]
+    return tokio::task::spawn_blocking(move || -> Result<()> {
+        // linux paketi tar.xz, sistemdeki tar açıyor
+        let tmp = dir.join("ffmpeg-acilis");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp)?;
+        let arc = tmp.join("p.tar.xz");
+        std::fs::write(&arc, &b)?;
+        drop(b);
+        let ok = std::process::Command::new("tar").arg("-xJf").arg(&arc).arg("-C").arg(&tmp).arg("--wildcards").arg("*/bin/ffmpeg").arg("*/bin/ffprobe").status()?.success();
+        let r = (|| -> Result<()> {
+            if !ok {
+                bail!("ffmpeg paketi açılamadı");
+            }
+            let bin = std::fs::read_dir(&tmp)?.flatten().map(|e| e.path().join("bin")).find(|p| p.is_dir());
+            let Some(bin) = bin else { bail!("ffmpeg paketi beklenen dosyaları içermiyor") };
+            for want in ["ffmpeg", "ffprobe"] {
+                replace(&dir, want, &mut std::fs::File::open(bin.join(want))?, "-version")?;
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&tmp);
+        r
+    })
+    .await?;
+    #[cfg(windows)]
     tokio::task::spawn_blocking(move || -> Result<()> {
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(b))?;
         let mut got = 0;
@@ -188,7 +225,9 @@ pub async fn auto_update(m: std::sync::Arc<crate::manager::Manager>) {
             let _g = lock().lock().await;
             // ilk açılış: eksik olanları sormadan kur
             let mut added = vec![];
-            if find_tool("yt-dlp").is_none() && install_ytdlp(&m.app).await.is_ok() {
+            // dağıtımın yt-dlp'si birkaç ayda eskiyip siteleri bozuyor, linux'ta kendi kopyamızı tut
+            let want_yt = find_tool("yt-dlp").is_none() || (cfg!(not(windows)) && !ours("yt-dlp"));
+            if want_yt && install_ytdlp(&m.app).await.is_ok() {
                 added.push("yt-dlp");
             }
             if find_tool("deno").is_none() && find_tool("node").is_none() && install_deno(&m.app).await.is_ok() {
@@ -261,7 +300,24 @@ mod tests {
         assert_eq!(super::expected_sha(d, "deno-x86_64-pc-windows-msvc.zip").unwrap(), "cba84b26e0df5ae7f74fc66b86a95b866872a86292ebd84fa1e959927edd93bf");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn broken_update_rolls_back() {
+        let dir = std::env::temp_dir().join(format!("trawl-tools-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = std::fs::read("/bin/true").unwrap();
+        super::replace(&dir, "t", &mut good.as_slice(), "--version").unwrap();
+        let e = super::replace(&dir, "t", &mut &b"bozuk"[..], "--version").unwrap_err().to_string();
+        assert!(e.contains("eski sürüme dönüldü"), "{e}");
+        assert_eq!(std::fs::read(dir.join("t")).unwrap(), good);
+        assert!(super::replace(&dir, "u", &mut &b"bozuk"[..], "--version").is_err());
+        assert!(!dir.join("u").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// bozuk yeni sürüm gelirse eskisi yerinde kalmalı
+    #[cfg(windows)]
     #[test]
     fn broken_update_rolls_back() {
         let dir = std::env::temp_dir().join(format!("trawl-tools-{}", std::process::id()));

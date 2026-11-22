@@ -76,6 +76,7 @@ pub fn show(app: &tauri::AppHandle) {
         let _ = w.show();
         let _ = w.unminimize();
         // tarayıcı öndeyken windows odak çalmaya izin vermiyor, sadece görev çubuğu yanıp sönüyordu
+        #[cfg(windows)]
         if let Ok(h) = w.hwnd() {
             force_front(h.0 as _);
         }
@@ -83,6 +84,7 @@ pub fn show(app: &tauri::AppHandle) {
     }
 }
 
+#[cfg(windows)]
 fn force_front(h: windows_sys::Win32::Foundation::HWND) {
     use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows_sys::Win32::UI::WindowsAndMessaging::*;

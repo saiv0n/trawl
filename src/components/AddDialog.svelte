@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import Icon from "./Icon.svelte";
   import Grabber from "./Grabber.svelte";
-  import { call, inTauri } from "../lib/api";
+  import { call, inTauri, sep } from "../lib/api";
   import { store, toasts, CATS } from "../lib/store.svelte";
   import { bytes, dur, compact, host, qlabel, ago, expandBatch } from "../lib/fmt";
   import { t } from "../lib/i18n.svelte";
@@ -132,7 +132,7 @@
     for (const h of [1080, 720]) { const v = pick(h); if (v && v.height !== best.height && !out.some((o: any) => o.height === v.height)) out.push({ ...v, label: `${v.height}p` }); }
     return hs.length ? out : [];
   });
-  const defFolder = $derived(folder || (s.categorize ? `${s.folder}\\${phase === "http" ? (CATS[res?.category] || CATS.diger).label : mode === "audio" ? "Müzik" : "Video"}` : s.folder));
+  const defFolder = $derived(folder || (s.categorize ? `${s.folder}${sep}${phase === "http" ? (CATS[res?.category] || CATS.diger).label : mode === "audio" ? "Müzik" : "Video"}` : s.folder));
 
   async function openGrabber() {
     phase = "loading"; step = 2;

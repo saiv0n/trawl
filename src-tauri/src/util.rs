@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+#[cfg(windows)]
 pub const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Trawl/1.0";
+#[cfg(not(windows))]
+pub const UA: &str = "Mozilla/5.0 (X11; Linux x86_64) Trawl/1.0";
 
 // eklentinin son ping'teki gerçek UA'sı; UA'ya bağlı imzalı CDN'ler için
 fn browser_ua_cell() -> &'static parking_lot::RwLock<String> {
@@ -224,7 +227,10 @@ pub fn data_dir() -> PathBuf {
         let _ = std::fs::create_dir_all(&p);
         return p;
     }
+    #[cfg(windows)]
     let base = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+    #[cfg(not(windows))]
+    let base = std::env::var("XDG_DATA_HOME").ok().filter(|v| v.starts_with('/')).unwrap_or_else(|| format!("{}/.local/share", std::env::var("HOME").unwrap_or_else(|_| ".".into())));
     let p = PathBuf::from(&base).join("Trawl");
     // eski adla (Velora) kalan veriyi bir kez taşı
     let old = PathBuf::from(&base).join(["Vel", "ora"].concat());
@@ -232,6 +238,12 @@ pub fn data_dir() -> PathBuf {
         let _ = std::fs::rename(&old, &p);
     }
     let _ = std::fs::create_dir_all(&p);
+    // çerezler ve şifreler burada, linux'ta başka kullanıcılar okumasın
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700));
+    }
     p
 }
 
@@ -243,7 +255,7 @@ pub fn bin_dir() -> PathBuf {
 
 /// önce uygulama verisi, sonra exe'nin yanı, en son PATH
 pub fn find_tool(name: &str) -> Option<PathBuf> {
-    let exe = format!("{name}.exe");
+    let exe = format!("{name}{}", std::env::consts::EXE_SUFFIX);
     let mut c = vec![bin_dir().join(&exe)];
     if let Ok(me) = std::env::current_exe() {
         if let Some(d) = me.parent() {
@@ -259,7 +271,31 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
     c.into_iter().find(|p| p.is_file())
 }
 
+#[cfg(windows)]
 pub const NO_WINDOW: u32 = 0x0800_0000;
+
+/// windows'ta konsol penceresi açmasın, linux'ta kendi süreç grubunda dursun ki torunlarıyla birlikte öldürülebilsin
+pub trait NoWindow {
+    fn no_window(&mut self) -> &mut Self;
+}
+impl NoWindow for std::process::Command {
+    fn no_window(&mut self) -> &mut Self {
+        #[cfg(windows)]
+        std::os::windows::process::CommandExt::creation_flags(self, NO_WINDOW);
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(self, 0);
+        self
+    }
+}
+impl NoWindow for tokio::process::Command {
+    fn no_window(&mut self) -> &mut Self {
+        #[cfg(windows)]
+        self.creation_flags(NO_WINDOW);
+        #[cfg(unix)]
+        self.process_group(0);
+        self
+    }
+}
 
 fn human(n: u64) -> String {
     let u = ["B", "KB", "MB", "GB", "TB"];
@@ -361,6 +397,7 @@ fn sensitive(k: &str) -> bool {
     k.eq_ignore_ascii_case("cookie") || k.eq_ignore_ascii_case("authorization")
 }
 
+#[cfg(windows)]
 fn dpapi(data: &[u8], seal: bool) -> Option<Vec<u8>> {
     use windows_sys::Win32::Foundation::LocalFree;
     use windows_sys::Win32::Security::Cryptography::*;
@@ -379,6 +416,12 @@ fn dpapi(data: &[u8], seal: bool) -> Option<Vec<u8>> {
     let v = unsafe { std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec() };
     unsafe { LocalFree(out.pbData.cast()) };
     Some(v)
+}
+
+// linux'ta dpapi yok; veri klasörü zaten 0700. windows'tan taşınan mühürlü değerler açılamaz, atılır
+#[cfg(not(windows))]
+fn dpapi(_: &[u8], _: bool) -> Option<Vec<u8>> {
+    None
 }
 
 /// çerez ve yetki başlıkları diske kullanıcıya bağlı şifreli gider
@@ -442,7 +485,7 @@ pub fn unseal_str(v: &str) -> String {
     bytes.and_then(|b| dpapi(&b, false)).and_then(|b| String::from_utf8(b).ok()).unwrap_or_default()
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod seal_tests {
     #[test]
     fn cookie_roundtrip() {
@@ -457,10 +500,14 @@ mod seal_tests {
 
 /// alt süreçleri (yt-dlp'nin açtığı ffmpeg dahil) birlikte öldürmek için iş nesnesi.
 /// tutamaç kapanınca, uygulama çökse bile, içindekiler de kapanır
+#[cfg(windows)]
 pub struct ProcJob(windows_sys::Win32::Foundation::HANDLE);
+#[cfg(windows)]
 unsafe impl Send for ProcJob {}
+#[cfg(windows)]
 unsafe impl Sync for ProcJob {}
 
+#[cfg(windows)]
 impl ProcJob {
     pub fn new() -> Option<Self> {
         use windows_sys::Win32::System::JobObjects::*;
@@ -486,18 +533,48 @@ impl ProcJob {
     }
 }
 
+#[cfg(windows)]
 impl Drop for ProcJob {
     fn drop(&mut self) {
         unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
     }
 }
 
-#[cfg(test)]
+/// linux'ta süreç grubu; çocuk no_window() ile kendi grubunu açıyor, grubu öldürmek torunları da alıyor
+#[cfg(unix)]
+pub struct ProcJob(parking_lot::Mutex<Vec<i32>>);
+
+#[cfg(unix)]
+impl ProcJob {
+    pub fn new() -> Option<Self> {
+        Some(Self(parking_lot::Mutex::new(Vec::new())))
+    }
+    pub fn add(&self, c: &tokio::process::Child) {
+        if let Some(p) = c.id() {
+            self.0.lock().push(p as i32);
+        }
+    }
+    pub fn kill(&self) {
+        for &g in self.0.lock().iter() {
+            unsafe { libc::killpg(g, libc::SIGKILL) };
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ProcJob {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
+#[cfg(all(test, windows))]
 mod job_tests {
+    use super::NoWindow;
     #[tokio::test]
     async fn job_kill_takes_grandchildren() {
         // cmd'nin açtığı ping torun süreç; iş nesnesi ikisini birden kapatmalı
-        let mut ch = tokio::process::Command::new("cmd").args(["/c", "ping -n 30 127.0.0.1 >nul"]).creation_flags(super::NO_WINDOW).spawn().unwrap();
+        let mut ch = tokio::process::Command::new("cmd").args(["/c", "ping -n 30 127.0.0.1 >nul"]).no_window().spawn().unwrap();
         let job = super::ProcJob::new().unwrap();
         job.add(&ch);
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -507,6 +584,24 @@ mod job_tests {
         assert!(t.elapsed().as_secs() < 3);
         let out = std::process::Command::new("tasklist").args(["/fi", &format!("PID eq {}", ch.id().unwrap_or(0))]).output().unwrap();
         assert!(!String::from_utf8_lossy(&out.stdout).contains("cmd.exe"));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod job_tests_unix {
+    use super::NoWindow;
+    #[tokio::test]
+    async fn job_kill_takes_grandchildren() {
+        let mut ch = tokio::process::Command::new("sh").args(["-c", "sleep 30 & wait"]).no_window().spawn().unwrap();
+        let job = super::ProcJob::new().unwrap();
+        job.add(&ch);
+        let pg = ch.id().unwrap() as i32;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        job.kill();
+        let _ = ch.wait().await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // grupta kimse kalmadıysa killpg ESRCH döner
+        assert_eq!(unsafe { libc::killpg(pg, 0) }, -1);
     }
 }
 

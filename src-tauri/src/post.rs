@@ -2,11 +2,25 @@
 
 use crate::manager::Manager;
 use crate::model::{Status, Task};
-use crate::util::NO_WINDOW;
+use crate::util::NoWindow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// linux'ta tarayıcılar kaynağı user.xdg.origin.url özniteliğine yazıyor, dosya yöneticileri bunu gösteriyor
+#[cfg(unix)]
+pub fn mark_of_web(path: &str, url: &str, page: &str) {
+    let ok = |u: &str| (u.starts_with("http://") || u.starts_with("https://")) && !u.contains(['\r', '\n', '\0']);
+    let Ok(cp) = std::ffi::CString::new(path) else { return };
+    for (k, v) in [("user.xdg.origin.url\0", url), ("user.xdg.referrer.url\0", page)] {
+        if ok(v) {
+            // tmpfs ya da fat'ta öznitelik yok, olmazsa geç
+            unsafe { libc::setxattr(cp.as_ptr(), k.as_ptr().cast(), v.as_ptr().cast(), v.len(), 0) };
+        }
+    }
+}
+
 /// tarayıcıların yazdığı Zone.Identifier akışı. yoksa indirilen exe SmartScreen'e takılmadan açılır
+#[cfg(windows)]
 pub fn mark_of_web(path: &str, url: &str, page: &str) {
     let clean = |u: &str| if u.starts_with("http://") || u.starts_with("https://") { u.replace(['\r', '\n'], "") } else { String::new() };
     let mut s = String::from("[ZoneTransfer]\r\nZoneId=3\r\n");
@@ -21,18 +35,40 @@ pub fn mark_of_web(path: &str, url: &str, page: &str) {
     let _ = std::fs::write(format!("{path}:Zone.Identifier"), s);
 }
 
+#[cfg(windows)]
 fn defender() -> Option<PathBuf> {
     let pf = std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into());
     let p = PathBuf::from(pf).join("Windows Defender").join("MpCmdRun.exe");
     p.exists().then_some(p)
 }
 
+/// clamdscan çalışan servisi kullanır, hızlıdır; yoksa clamscan. 0 temiz, 1 tehdit
+#[cfg(not(windows))]
+pub(crate) async fn scan(path: &str) -> Option<bool> {
+    for exe in ["clamdscan", "clamscan"] {
+        let Some(p) = crate::util::find_tool(exe) else { continue };
+        let mut c = tokio::process::Command::new(p);
+        c.args(["--no-summary", "--infected"]);
+        if exe == "clamdscan" {
+            c.arg("--fdpass");
+        }
+        let Ok(out) = c.arg("--").arg(path).no_window().output().await else { continue };
+        match out.status.code() {
+            Some(0) => return Some(true),
+            Some(1) => return Some(false),
+            _ => continue,
+        }
+    }
+    None
+}
+
 /// Some(true) temiz, Some(false) tehdit bulundu, None taranamadı
+#[cfg(windows)]
 pub(crate) async fn scan(path: &str) -> Option<bool> {
     let exe = defender()?;
     let out = tokio::process::Command::new(exe)
         .args(["-Scan", "-ScanType", "3", "-File", path])
-        .creation_flags(NO_WINDOW)
+        .no_window()
         .output()
         .await
         .ok()?;
@@ -91,7 +127,40 @@ fn flatten(dir: &Path) {
     }
 }
 
+/// tar her sıkıştırmayı kendi tanıyor; zip, 7z ve rar için 7z, o yoksa unzip
+#[cfg(not(windows))]
+pub(crate) async fn extract(path: &str) -> Result<PathBuf, String> {
+    use crate::util::find_tool;
+    let n = path.to_lowercase();
+    let dir = extract_dir(Path::new(path));
+    let mut c = if [".tar", ".tar.gz", ".tgz", ".tar.xz", ".tar.bz2"].iter().any(|e| n.ends_with(e)) && find_tool("tar").is_some() {
+        let mut c = tokio::process::Command::new("tar");
+        c.arg("-xf").arg(path).arg("-C").arg(&dir);
+        c
+    } else if let Some(z) = find_tool("7z").or_else(|| find_tool("7zz")) {
+        let mut c = tokio::process::Command::new(z);
+        c.args(["x", "-y", "-bd"]).arg(format!("-o{}", dir.display())).arg("--").arg(path);
+        c
+    } else if n.ends_with(".zip") && find_tool("unzip").is_some() {
+        let mut c = tokio::process::Command::new("unzip");
+        c.args(["-q", "-o"]).arg(path).arg("-d").arg(&dir);
+        c
+    } else {
+        return Err("arşivi açacak araç yok, 7zip paketini kurun".into());
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let out = c.stdin(std::process::Stdio::null()).no_window().output().await.map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let _ = std::fs::remove_dir_all(&dir);
+        let msg = String::from_utf8_lossy(&out.stderr).lines().rfind(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+        return Err(if msg.is_empty() { "arşiv açılamadı".into() } else { msg });
+    }
+    flatten(&dir);
+    Ok(dir)
+}
+
 /// windows 10'dan beri gelen tar.exe zip'i, windows 11'dekisi 7z ve rar'ı da açıyor
+#[cfg(windows)]
 pub(crate) async fn extract(path: &str) -> Result<PathBuf, String> {
     let sys = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     let tar = PathBuf::from(sys).join("System32").join("tar.exe");
@@ -105,7 +174,7 @@ pub(crate) async fn extract(path: &str) -> Result<PathBuf, String> {
         .arg(path)
         .arg("-C")
         .arg(&dir)
-        .creation_flags(NO_WINDOW)
+        .no_window()
         .output()
         .await
         .map_err(|e| e.to_string())?;
@@ -119,7 +188,10 @@ pub(crate) async fn extract(path: &str) -> Result<PathBuf, String> {
 }
 
 pub const GONE: &str = "Dosya indikten hemen sonra kayboldu. Antivirüs karantinaya almış olabilir";
+#[cfg(windows)]
 pub const THREAT: &str = "Windows Defender bu dosyada tehdit buldu, dosya karantinaya alınmış olabilir";
+#[cfg(not(windows))]
+pub const THREAT: &str = "ClamAV bu dosyada tehdit buldu";
 
 fn stage(t: &Task, s: &str) {
     let mut d = t.d.lock();
@@ -160,7 +232,12 @@ pub fn expand_cmd(cmd: &str, path: &str) -> String {
     let p = Path::new(path);
     let folder = p.parent().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
     let name = p.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
-    cmd.replace("{path}", &format!("\"{path}\"")).replace("{folder}", &format!("\"{folder}\"")).replace("{name}", &format!("\"{name}\""))
+    #[cfg(windows)]
+    let q = |s: &str| format!("\"{s}\"");
+    // sh çift tırnak içinde $ ve ` açıyor, tek tırnak güvenli
+    #[cfg(not(windows))]
+    let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    cmd.replace("{path}", &q(path)).replace("{folder}", &q(&folder)).replace("{name}", &q(&name))
 }
 
 /// bitti sayılmadan önce çalışır. dosya bozuksa ya da tehdit varsa hata mesajı döner
@@ -214,7 +291,10 @@ pub async fn run(m: &Arc<Manager>, t: &Arc<Task>) -> Result<(), String> {
         }
     }
     if !s.run_cmd.trim().is_empty() {
-        let _ = tokio::process::Command::new("cmd").raw_arg(format!("/C {}", expand_cmd(&s.run_cmd, &path))).creation_flags(NO_WINDOW).spawn();
+        #[cfg(windows)]
+        let _ = tokio::process::Command::new("cmd").raw_arg(format!("/C {}", expand_cmd(&s.run_cmd, &path))).no_window().spawn();
+        #[cfg(not(windows))]
+        let _ = tokio::process::Command::new("sh").arg("-c").arg(expand_cmd(&s.run_cmd, &path)).no_window().spawn();
     }
     if s.open_done {
         let _ = tauri_plugin_opener::open_path(&opened, None::<&str>);
@@ -233,6 +313,23 @@ mod tests {
         assert_eq!(d, std::path::PathBuf::from(r"C:\yok\klasor\paket"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn mark_of_web_written() {
+        let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join(format!("trawl-motw-{}", std::process::id()));
+        std::fs::write(&p, b"x").unwrap();
+        let ps = p.to_string_lossy().to_string();
+        super::mark_of_web(&ps, "https://ornek.test/a.exe", "javascript:alert(1)");
+        let c = std::ffi::CString::new(ps.clone()).unwrap();
+        let mut buf = [0u8; 256];
+        let n = unsafe { libc::getxattr(c.as_ptr(), c"user.xdg.origin.url".as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+        let r = unsafe { libc::getxattr(c.as_ptr(), c"user.xdg.referrer.url".as_ptr(), std::ptr::null_mut(), 0) };
+        let _ = std::fs::remove_file(&p);
+        assert_eq!(&buf[..n.max(0) as usize], b"https://ornek.test/a.exe");
+        assert_eq!(r, -1);
+    }
+
+    #[cfg(windows)]
     #[test]
     fn mark_of_web_written() {
         let p = std::env::temp_dir().join(format!("trawl-motw-{}.exe", std::process::id()));
@@ -254,6 +351,9 @@ mod tests {
 ");
         assert_eq!(super::pick_sum(&many, "x.iso", 64).as_deref(), Some(a));
         assert_eq!(super::pick_sum("<html>yok</html>", "x.iso", 64), None);
+        #[cfg(windows)]
         assert_eq!(super::expand_cmd("echo {name} {folder}", r"C:\a b\c.zip"), r#"echo "c.zip" "C:\a b""#);
+        #[cfg(not(windows))]
+        assert_eq!(super::expand_cmd("echo {name} {folder}", "/a b/it's.zip"), r#"echo 'it'\''s.zip' '/a b'"#);
     }
 }
